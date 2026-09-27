@@ -89,3 +89,52 @@ describe('mapRangeToNodes', () => {
     expect(refs[1]!.end).toBe(1);
   });
 });
+
+describe('splitChunks', () => {
+  async function split(t: string) {
+    const { splitChunks } = await import('../src/lib/paragraphs');
+    return splitChunks(t);
+  }
+
+  it('short text is unchanged', async () => {
+    expect(await split('小明去学校。')).toEqual(['小明去学校。']);
+  });
+
+  it('accumulates sentences, cutting after sentence punctuation once ≥40 chars', async () => {
+    const s = '短句。'.repeat(10) + '又一个短句。';
+    const t = s.repeat(5);
+    const parts = await split(t);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const p of parts) {
+      expect(p.length).toBeLessThanOrEqual(160);
+      expect(/[。！？；]$/.test(p) || p.length === 160 || p.length < 40).toBe(true);
+    }
+    expect(parts.join('')).toBe(t);
+  });
+
+  it('long paragraph: all pieces ≤160 and concatenation equals input', async () => {
+    const t = '从前，在一片茂密的森林里，住着一只聪明的小狐狸。'.repeat(12);
+    const parts = await split(t);
+    expect(parts.join('')).toBe(t);
+    expect(parts.every((p) => p.length <= 160)).toBe(true);
+    expect(parts.length).toBeGreaterThan(3);
+  });
+
+  it('single sentence >120 chars is cut at the last minor punctuation before 120', async () => {
+    const seg = '这是一段很长的句子，';
+    const t = seg.repeat(15) + '结尾。';
+    const parts = await split(t);
+    expect(parts.join('')).toBe(t);
+    expect(parts.every((p) => p.length <= 160)).toBe(true);
+    expect(parts[0]!.endsWith('，')).toBe(true);
+    expect(parts[0]!.length).toBeLessThanOrEqual(121);
+  });
+
+  it('hard caps at 160 when no punctuation at all', async () => {
+    const t = '字'.repeat(400);
+    const parts = await split(t);
+    expect(parts.join('')).toBe(t);
+    expect(parts.slice(0, -1).every((p) => p.length === 160)).toBe(true);
+    expect(parts.every((p) => p.length <= 160)).toBe(true);
+  });
+});

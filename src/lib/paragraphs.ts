@@ -118,21 +118,47 @@ export function mapRangeToNodes(
   return refs;
 }
 
-/** Split a long paragraph into chunks at sentence punctuation (for segmentation). */
-export function splitChunks(text: string, maxLen = 500): string[] {
-  if (text.length <= maxLen) return [text];
-  const chunks: string[] = [];
+/**
+ * Split a long paragraph into analysis items of at most ~120 chars:
+ * sentences accumulate until a sentence-ending punctuation is seen at ≥40
+ * chars; a single runaway sentence is cut at the last minor punctuation
+ * (，、：,) before 120; hard cap 160 chars.
+ */
+const SENT_END = new Set('。！？；…!?；;\n'.split(''));
+const MINOR_PUNCT = new Set('，、：,'.split(''));
+
+export function splitChunks(
+  text: string,
+  minLen = 40,
+  targetLen = 120,
+  hardLen = 160,
+): string[] {
+  if (text.length <= targetLen) return [text];
+  const out: string[] = [];
   let cur = '';
   for (const ch of text) {
     cur += ch;
-    if (cur.length >= maxLen * 0.5 && '。！？；\n'.includes(ch)) {
-      chunks.push(cur);
+    if (cur.length >= minLen && SENT_END.has(ch)) {
+      out.push(cur);
       cur = '';
-    } else if (cur.length >= maxLen) {
-      chunks.push(cur);
-      cur = '';
+    } else if (cur.length >= targetLen) {
+      // Look for the last minor punctuation within the target window.
+      let cut = -1;
+      for (let i = Math.min(targetLen, cur.length) - 1; i >= minLen; i--) {
+        if (MINOR_PUNCT.has(cur[i]!)) {
+          cut = i;
+          break;
+        }
+      }
+      if (cut >= 0) {
+        out.push(cur.slice(0, cut + 1));
+        cur = cur.slice(cut + 1);
+      } else if (cur.length >= hardLen) {
+        out.push(cur.slice(0, hardLen));
+        cur = cur.slice(hardLen);
+      }
     }
   }
-  if (cur) chunks.push(cur);
-  return chunks;
+  if (cur) out.push(cur);
+  return out;
 }

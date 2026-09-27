@@ -531,6 +531,62 @@ const uiInfo = await ap.evaluate(() => {
 check('reader: Aa popover + 间隔/标色 segmented', uiInfo.popOpen === true && uiInfo.gapSeg >= 2, JSON.stringify(uiInfo));
 check('reader: progress bar fills + bar hides on scroll down',
   uiInfo.fillW !== '' && uiInfo.fillW !== '0%', JSON.stringify(uiInfo));
+
+// chunk coloring: in cloud paragraphs, all word spans of a chunk share a
+// class and adjacent word-containing chunks differ
+if (dev) {
+  const chunkColors = await ap.evaluate(() => {
+    const sr = document.querySelector('div.readhd-root#readhd-reader')
+      ?.shadowRoot;
+    if (!sr) return { open: false };
+    const dbg = JSON.parse(
+      sr.querySelector('#readhd-dbg')?.textContent || '[]',
+    );
+    const isWL = (t) => /[一-鿿\w]/.test(t);
+    let checked = 0;
+    const bad = [];
+    for (const rp of dbg) {
+      const a = rp.analysis;
+      if (!a || a.source !== 'cloud') continue;
+      // map data-wi → class for the wrapper containing this paragraph text
+      const wrap = [...sr.querySelectorAll('span.rt')].find((w) =>
+        rp.text.startsWith(w.textContent.slice(0, 10)),
+      );
+      if (!wrap) continue;
+      const clsOf = {};
+      wrap.parentElement // paragraph may span several .rt wrappers
+        ?.querySelectorAll('span.w')
+        .forEach((s) => (clsOf[s.dataset.wi] ??= s.className));
+      const words = a.words.filter((w) => isWL(w.text));
+      const chunkCls = new Map();
+      let prevCls = null;
+      let prevChunk = null;
+      for (const w of words) {
+        const wi = a.words.indexOf(w);
+        const cls = clsOf[wi];
+        if (!cls) continue;
+        checked++;
+        if (chunkCls.has(w.chunk) && chunkCls.get(w.chunk) !== cls)
+          bad.push(`chunk ${w.chunk} has two classes`);
+        chunkCls.set(w.chunk, cls);
+        if (
+          prevChunk !== null &&
+          w.chunk !== prevChunk &&
+          cls === prevCls
+        )
+          bad.push(`adjacent chunks ${prevChunk}/${w.chunk} same class`);
+        prevChunk = w.chunk;
+        prevCls = cls;
+      }
+    }
+    return { open: true, checked, bad: bad.slice(0, 5) };
+  });
+  check(
+    'reader: chunk colors (same chunk same class, adjacent differ)',
+    chunkColors.open && chunkColors.checked > 0 && chunkColors.bad.length === 0,
+    JSON.stringify(chunkColors),
+  );
+}
 await shot(ap, 'm3-reader-top.png');
 
 // chunk gaps (cloud): some span.w gets margin-inline-end, and no margined

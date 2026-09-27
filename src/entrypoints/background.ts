@@ -14,17 +14,13 @@ import {
 import { usageLog, usageDaily, lastError } from '../lib/settings';
 
 const DEBOUNCE_MS = 150;
-const MAX_BATCH_CHARS = 800;
+const MAX_BATCH_CHARS = 600;
+const MAX_BATCH_ITEMS = 8;
 const MAX_CONCURRENT = 2;
 const TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 3;
 const MAX_TOKENS = 16000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-interface QueueItem {
-  text: string;
-  resolve: (analysis: Analysis | null) => void;
-}
 
 const queue: QueueItem[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -130,7 +126,12 @@ async function drain(): Promise<void> {
     while (queue.length > 0) {
       const next = queue[0];
       if (!next) break;
-      if (batch.length > 0 && chars + next.text.length > MAX_BATCH_CHARS) break;
+      if (
+        batch.length > 0 &&
+        (chars + next.text.length > MAX_BATCH_CHARS ||
+          batch.length >= MAX_BATCH_ITEMS)
+      )
+        break;
       queue.shift();
       batch.push(next);
       chars += next.text.length;
@@ -148,77 +149,106 @@ async function drain(): Promise<void> {
   }
 }
 
-async function sendBatch(batch: QueueItem[]): Promise<void> {
-  const texts = batch.map((b) => b.text);
+/** Parse-failure retry shape: round 0 → halves, round ≥1 → solo items. */
+function regroup(indices: number[], round: number): number[][] {
+  if (indices.length <= 1 || round >= 1) return indices.map((i) => [i]);
+  const mid = Math.ceil(indices.length / 2);
+  return [indices.slice(0, mid), indices.slice(mid)];
+}
+
+export interface QueueItem {
+  text: string;
+  resolve: (analysis: Analysis | null) => void;
+}
+
+// exported for tests
+export async function sendBatch(batch: QueueItem[]): Promise<void> {
   const p = await resolveProvider();
-  const chars = texts.reduce((n, t) => n + t.length, 0);
-  const failAll = () => {
-    for (const item of batch) item.resolve(null);
-  };
   if (!p.configured) {
-    failAll();
+    for (const item of batch) item.resolve(null);
     return;
   }
-  const user = JSON.stringify(texts);
+  // Failure isolation: HTTP errors retry the same group; parse/validation
+  // failures are resent split (halves, then solo). Max 3 attempts per item.
+  const pending = new Set(batch.map((_, i) => i));
+  let groups: number[][] = [batch.map((_, i) => i)];
   let lastMsg = '多次重试后仍失败';
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    if (attempt > 0) await sleep(600 * attempt);
-    const r = await callOnce(p, user);
-    let parsed: (Analysis | null)[] | null = null;
-    let parseNote: string | undefined;
-    if (r.ok) {
-      parsed = parseAnalysisText(texts, r.text ?? '');
-      const nulls = parsed.filter((x) => x === null).length;
-      if (nulls === texts.length) {
-        // An all-null parse means the response body was unusable; classify
-        // why so the usage log is diagnosable.
-        parsed = null;
-        if (r.truncated) {
-          parseNote = '输出被截断';
-        } else {
-          const arr = extractJsonArray(r.text ?? '');
-          parseNote =
-            arr === null
-              ? '返回格式无法解析'
-              : arr.length !== texts.length
-                ? `返回条目数不符（${arr.length}/${texts.length}）`
-                : '分词结果与原文不一致';
+  for (let round = 0; round < MAX_ATTEMPTS && groups.length > 0; round++) {
+    if (round > 0) await sleep(600 * round);
+    const next: number[][] = [];
+    for (const g of groups) {
+      const gTexts = g.map((i) => batch[i]!.text);
+      const gChars = gTexts.reduce((n, t) => n + t.length, 0);
+      const r = await callOnce(p, JSON.stringify(gTexts));
+      let parsed: (Analysis | null)[] | null = null;
+      let parseNote: string | undefined;
+      if (r.ok) {
+        parsed = parseAnalysisText(gTexts, r.text ?? '');
+        const nulls = parsed.filter((x) => x === null).length;
+        if (nulls === gTexts.length) {
+          // The whole response was unusable; classify why for the usage log.
+          parsed = null;
+          if (r.truncated) {
+            parseNote = '输出被截断';
+          } else {
+            const arr = extractJsonArray(r.text ?? '');
+            parseNote =
+              arr === null
+                ? '返回格式无法解析'
+                : arr.length !== gTexts.length
+                  ? `返回条目数不符（${arr.length}/${gTexts.length}）`
+                  : '分词结果与原文不一致';
+          }
+        } else if (nulls > 0) {
+          parseNote = `${nulls}/${gTexts.length} 段未通过校验`;
         }
-      } else if (nulls > 0) {
-        parseNote = `${nulls}/${texts.length} 段未通过校验`;
+      }
+      if (!r.ok && r.error) lastMsg = r.error;
+      else if (r.ok && parsed === null) lastMsg = parseNote!;
+      recordUsage({
+        ts: Date.now(),
+        providerId: p.preset.id,
+        model: p.model,
+        inputTokens: r.inputTokens ?? 0,
+        outputTokens: r.outputTokens ?? 0,
+        ms: r.ms,
+        ok: r.ok && parsed !== null,
+        status: r.status,
+        error: r.ok ? parseNote : r.error,
+        paragraphs: g.length,
+        chars: gChars,
+      });
+      if (parsed) {
+        const failed: number[] = [];
+        g.forEach((gi, j) => {
+          const a = parsed![j] ?? null;
+          if (a) {
+            resultCacheSet(batch[gi]!.text, a);
+            batch[gi]!.resolve(a);
+            pending.delete(gi);
+          } else {
+            failed.push(gi);
+          }
+        });
+        if (failed.length) next.push(...regroup(failed, round));
+      } else if (!r.ok) {
+        next.push(g); // network/HTTP error → identical retry
+      } else {
+        next.push(...regroup(g, round)); // parse failure → split
       }
     }
-    if (!r.ok && r.error) lastMsg = r.error;
-    else if (r.ok && parsed === null) lastMsg = parseNote!;
-    recordUsage({
+    groups = next;
+  }
+  if (pending.size === 0) {
+    setLastError(null);
+  } else {
+    setLastError({
       ts: Date.now(),
       providerId: p.preset.id,
-      model: p.model,
-      inputTokens: r.inputTokens ?? 0,
-      outputTokens: r.outputTokens ?? 0,
-      ms: r.ms,
-      ok: r.ok && parsed !== null,
-      status: r.status,
-      error: r.ok ? parseNote : r.error,
-      paragraphs: batch.length,
-      chars,
+      message: lastMsg,
     });
-    if (parsed) {
-      batch.forEach((item, i) => {
-        const a = parsed![i] ?? null;
-        if (a) resultCacheSet(item.text, a);
-        item.resolve(a);
-      });
-      setLastError(null);
-      return;
-    }
+    for (const i of pending) batch[i]!.resolve(null);
   }
-  setLastError({
-    ts: Date.now(),
-    providerId: p.preset.id,
-    message: lastMsg,
-  });
-  failAll();
 }
 
 /** One-shot connection test used by the options page (no queue/cache). */

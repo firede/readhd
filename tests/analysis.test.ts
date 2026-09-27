@@ -72,11 +72,47 @@ describe('parseAnalysisItem', () => {
 });
 
 describe('parseAnalyzeResponse', () => {
-  it('outer length mismatch -> all null', () => {
+  it('outer length mismatch -> content-matched items, unmatched null', () => {
     const body = {
       content: [{ type: 'text', text: JSON.stringify([ITEM]) }],
     };
-    expect(parseAnalyzeResponse([ORIG, '另一段'], body)).toEqual([null, null]);
+    const r = parseAnalyzeResponse([ORIG, '另一段'], body);
+    expect(r[0]!.words.map((w) => w.text).join('')).toBe(ORIG);
+    expect(r[1]).toBeNull();
+  });
+
+  it('extra duplicated item is ignored', () => {
+    const body = {
+      content: [{ type: 'text', text: JSON.stringify([ITEM, ITEM]) }],
+    };
+    const r = parseAnalyzeResponse([ORIG], body);
+    expect(r[0]!.source).toBe('cloud');
+    expect(r.length).toBe(1);
+  });
+
+  it('missing middle item: later items still matched', () => {
+    const T1 = '他去学校';
+    const I1 = [[['他', 'n'], ['去', 'v'], ['学校', 'n']]];
+    const T3 = '天气很好';
+    const I3 = [[['天气', 'n'], ['很', 'd'], ['好', 'a']]];
+    const body = {
+      content: [{ type: 'text', text: JSON.stringify([I1, I3]) }],
+    };
+    const r = parseAnalyzeResponse([T1, '中间一段没有返回', T3], body);
+    expect(r[0]!.words.length).toBe(3);
+    expect(r[1]).toBeNull();
+    expect(r[2]!.words.length).toBe(3);
+  });
+
+  it('reordered items are matched by content', () => {
+    const T1 = '他去学校';
+    const I1 = [[['他', 'n'], ['去', 'v'], ['学校', 'n']]];
+    const body = {
+      content: [{ type: 'text', text: JSON.stringify([I1, ITEM]) }],
+    };
+    const r = parseAnalyzeResponse([ORIG, T1], body);
+    expect(r[0]!.words.map((w) => w.text).join('')).toBe(ORIG);
+    expect(r[1]!.words.map((w) => w.text).join('')).toBe(T1);
   });
   it('parses batch, ignores thinking blocks', () => {
     const body = {

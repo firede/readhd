@@ -66,15 +66,62 @@ export function parseAnalysisItem(
   };
 }
 
-/** Parse per-input analyses from the raw model text output. */
+/** Whitespace-stripped joined word texts of a recovered item, or null. */
+function itemText(item: unknown): string | null {
+  if (!Array.isArray(item) || item.length === 0) return null;
+  let out = '';
+  for (const chunk of item) {
+    if (!Array.isArray(chunk)) return null;
+    for (const w of chunk) {
+      if (!Array.isArray(w) || typeof w[0] !== 'string') return null;
+      out += w[0];
+    }
+  }
+  return out.replace(/\s+/gu, '');
+}
+
+/**
+ * Parse per-input analyses from the raw model text output. When the outer
+ * array length matches, validation is positional. When it differs (e.g.
+ * salvage recovered fewer items, or the model dropped/duplicated an item),
+ * items are matched to inputs by content: each item's stripped joined text
+ * is assigned to the first unmatched input with identical stripped text.
+ */
 export function parseAnalysisText(
   inputs: string[],
   text: string,
 ): (Analysis | null)[] {
-  const allNull = inputs.map(() => null);
+  const out: (Analysis | null)[] = inputs.map(() => null);
   const arr = extractJsonArray(text);
-  if (!arr || arr.length !== inputs.length) return allNull;
-  return inputs.map((input, i) => parseAnalysisItem(input, arr[i]));
+  if (!arr) return out;
+  const used = new Set<number>();
+  // Phase 1: positional validation when the count matches.
+  if (arr.length === inputs.length) {
+    for (let i = 0; i < inputs.length; i++) {
+      const a = parseAnalysisItem(inputs[i]!, arr[i]);
+      if (a) {
+        out[i] = a;
+        used.add(i);
+      }
+    }
+  }
+  // Phase 2: content matching — assign each remaining item to the first
+  // unmatched input whose stripped text equals the item's joined words.
+  for (let j = 0; j < arr.length; j++) {
+    if (used.has(j)) continue;
+    const joined = itemText(arr[j]);
+    if (joined === null) continue;
+    for (let i = 0; i < inputs.length; i++) {
+      if (out[i] !== null) continue;
+      if (inputs[i]!.replace(/\s+/gu, '') !== joined) continue;
+      const a = parseAnalysisItem(inputs[i]!, arr[j]);
+      if (a) {
+        out[i] = a;
+      }
+      break;
+    }
+  }
+  return out;
 }
 
 /** Parse a full Anthropic-style response into per-input analyses. */

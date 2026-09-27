@@ -111,7 +111,7 @@ export function mergeChunkAnalyses(
 
 /** Local analysis for a (possibly long) paragraph, chunked at 800 chars. */
 export function analyzeParagraphLocal(text: string): Analysis {
-  const chunks = splitChunks(text, 800);
+  const chunks = splitChunks(text);
   return mergeChunkAnalyses(chunks, chunks.map(localAnalysis));
 }
 
@@ -120,7 +120,7 @@ export function analyzeParagraphLocal(text: string): Analysis {
  * A chunk whose cloud result is null falls back to its local analysis.
  */
 export async function analyzeParagraphCloud(text: string): Promise<Analysis> {
-  const chunks = splitChunks(text, 800);
+  const chunks = splitChunks(text);
   const per = await Promise.all(
     chunks.map(async (c) => (await analyzeCloudCached(c)) ?? localAnalysis(c)),
   );
@@ -129,7 +129,7 @@ export async function analyzeParagraphCloud(text: string): Promise<Analysis> {
 
 /** Whole-paragraph cloud analysis if every chunk is already cached. */
 export function getParagraphCloud(text: string): Analysis | undefined {
-  const chunks = splitChunks(text, 800);
+  const chunks = splitChunks(text);
   const per: Analysis[] = [];
   for (const c of chunks) {
     const hit = getCachedCloud(c);
