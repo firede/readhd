@@ -5,17 +5,22 @@ import {
   altColor,
   bgTheme,
   colorPreset,
+  colorUnit,
   disabledHosts,
   enabled,
   engine,
+  fadeFunctionWords,
   fontScale,
   letterSpacing,
   lineHeight,
+  readingRuler,
+  rulerLines,
   type BgTheme,
   type ColorPreset,
+  type ColorUnit,
   type Engine,
 } from '../../lib/settings';
-import { segmentStatus } from '../../lib/segmenter';
+import { analyzeStatus } from '../../lib/analyzer';
 
 const PRESET_COLORS: Record<ColorPreset, string> = {
   blue: '#1e40af',
@@ -42,6 +47,10 @@ export default function App() {
   const [hosts, setHosts] = useState<string[]>([]);
   const [alt, setAlt] = useState(true);
   const [preset, setPreset] = useState<ColorPreset>('blue');
+  const [unit, setUnit] = useState<ColorUnit>('word');
+  const [fade, setFade] = useState(false);
+  const [ruler, setRuler] = useState(false);
+  const [lines, setLines] = useState<1 | 2 | 3>(2);
   const [eng, setEng] = useState<Engine>('cloud');
   const [keyOk, setKeyOk] = useState<boolean | null>(null);
   const [lh, setLh] = useState<number | null>(null);
@@ -55,29 +64,38 @@ export default function App() {
         await browser.tabs.query({ active: true, currentWindow: true })
       )[0];
       const h = tab?.url ? new URL(tab.url).hostname : '';
-      const [en, hs, a, p, e, l, s, f, b, st] = await Promise.all([
-        enabled.getValue(),
-        disabledHosts.getValue(),
-        altColor.getValue(),
-        colorPreset.getValue(),
-        engine.getValue(),
-        lineHeight.getValue(),
-        letterSpacing.getValue(),
-        fontScale.getValue(),
-        bgTheme.getValue(),
-        segmentStatus(),
-      ]);
+      const [en, hs, a, p, u, fd, e, l, s, f, b, rr, rl, st] =
+        await Promise.all([
+          enabled.getValue(),
+          disabledHosts.getValue(),
+          altColor.getValue(),
+          colorPreset.getValue(),
+          colorUnit.getValue(),
+          fadeFunctionWords.getValue(),
+          engine.getValue(),
+          lineHeight.getValue(),
+          letterSpacing.getValue(),
+          fontScale.getValue(),
+          bgTheme.getValue(),
+          readingRuler.getValue(),
+          rulerLines.getValue(),
+          analyzeStatus(),
+        ]);
       setOn(en);
       setHosts(hs);
       setHost(h);
       setHostOn(!hs.includes(h));
       setAlt(a);
       setPreset(p);
+      setUnit(u);
+      setFade(fd);
       setEng(e);
       setLh(l);
       setLs(s);
       setFs(f);
       setBg(b);
+      setRuler(rr);
+      setLines(rl);
       setKeyOk(st?.configured ?? null);
       setReady(true);
     })();
@@ -202,6 +220,71 @@ export default function App() {
             ))}
           </div>
         </div>
+        <div className="row">
+          <label>标色单位</label>
+          <div className="seg">
+            {(['word', 'chunk'] as const).map((u) => (
+              <button
+                key={u}
+                className={`segbtn ${unit === u ? 'selected' : ''}`}
+                onClick={() => {
+                  setUnit(u);
+                  void colorUnit.setValue(u);
+                }}
+              >
+                {u === 'word' ? '词' : '意群'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {unit === 'chunk' && (eng === 'local' || keyOk === false) && (
+          <div className="status">意群需要云端分析</div>
+        )}
+        <div className="row">
+          <label htmlFor="sw-fade">淡化虚词（的、了、吗…）</label>
+          <input
+            id="sw-fade"
+            className="switch"
+            type="checkbox"
+            checked={fade}
+            onChange={(e) => {
+              setFade(e.target.checked);
+              void fadeFunctionWords.setValue(e.target.checked);
+            }}
+          />
+        </div>
+        <div className="row">
+          <label htmlFor="sw-ruler">阅读尺</label>
+          <input
+            id="sw-ruler"
+            className="switch"
+            type="checkbox"
+            checked={ruler}
+            onChange={(e) => {
+              setRuler(e.target.checked);
+              void readingRuler.setValue(e.target.checked);
+            }}
+          />
+        </div>
+        {ruler && (
+          <div className="row">
+            <label>行数</label>
+            <div className="seg">
+              {([1, 2, 3] as const).map((n) => (
+                <button
+                  key={n}
+                  className={`segbtn ${lines === n ? 'selected' : ''}`}
+                  onClick={() => {
+                    setLines(n);
+                    void rulerLines.setValue(n);
+                  }}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <div className="section">
         <div className="row">
@@ -260,16 +343,6 @@ export default function App() {
         </div>
       </div>
       <div className="btn-row">
-        <button
-          className="big primary"
-          onClick={() =>
-            void browser.tabs.create({
-              url: browser.runtime.getURL('/selftest.html'),
-            })
-          }
-        >
-          开始阅读自测
-        </button>
         <button
           className="big"
           onClick={() => void browser.runtime.openOptionsPage()}

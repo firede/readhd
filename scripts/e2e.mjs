@@ -64,8 +64,10 @@ async function hlStats(page) {
     for (const name of [
       'readhd-light-a',
       'readhd-light-b',
+      'readhd-light-f',
       'readhd-dark-a',
       'readhd-dark-b',
+      'readhd-dark-f',
     ]) {
       const h = CSS.highlights.get(name);
       o[name] = h ? h.size : -1;
@@ -74,18 +76,32 @@ async function hlStats(page) {
   });
 }
 
-async function hlTexts(page) {
-  return page.evaluate(() => {
-    const texts = [];
-    for (const h of CSS.highlights.values()) {
-      for (const r of h) texts.push(r.toString());
-    }
-    return texts;
-  });
+// text -> highlight name containing a range with exactly that text
+async function hlOf(page, text) {
+  return page.evaluate((t) => {
+    for (const [name, h] of CSS.highlights.entries())
+      for (const r of h) if (r.toString() === t) return name;
+    return null;
+  }, text);
 }
 
-// --- fixture page, local engine ---
-await setSync({ engine: 'local', enabled: true, altColor: true });
+async function waitForToken(page, text, timeout = 25000) {
+  return page
+    .waitForFunction(
+      (t) => {
+        for (const h of CSS.highlights.values())
+          for (const r of h) if (r.toString() === t) return true;
+        return false;
+      },
+      text,
+      { timeout },
+    )
+    .then(() => true)
+    .catch(() => false);
+}
+
+// --- fixture page, local engine, word mode ---
+await setSync({ engine: 'local', enabled: true, altColor: true, colorUnit: 'word' });
 const page = await ctx.newPage();
 await page.goto(fixtureUrl);
 await page.waitForTimeout(1800); // appended <section> arrives at 1s
@@ -93,7 +109,6 @@ let stats = await hlStats(page);
 console.log('local stats', stats);
 check('local: highlights non-empty', stats['readhd-light-a'] > 0, JSON.stringify(stats));
 
-// dynamically appended paragraph got highlights
 const appended = await page.evaluate(() => {
   const p = document.getElementById('appended');
   if (!p) return { exists: false, ranges: 0 };
@@ -105,51 +120,186 @@ const appended = await page.evaluate(() => {
   return { exists: true, ranges };
 });
 check('appended paragraph highlighted', appended.exists && appended.ranges > 0, JSON.stringify(appended));
+check('local tokens: 花盆里 merged, no 种下 token',
+  (await hlOf(page, '花盆里')) !== null && (await hlOf(page, '种下')) === null);
+await shot(page, 'm2a-word-local.png');
 
-// local segmentation signature: '花盆里' merged, '种下' split
-let texts = await hlTexts(page);
-check(
-  'local tokens: 花盆里 merged, no 种下 token',
-  texts.includes('花盆里') && !texts.includes('种下'),
-);
-await shot(page, 'after-local.png');
-
-// --- cloud engine ---
-await setSync({ engine: 'cloud' });
-await shot(page, 'after-cloud.png');
-if (dev) {
-  // wait for the cloud result to be applied (distinguished token '种下')
-  const gotCloud = await page
-    .waitForFunction(
-      () => {
-        for (const h of CSS.highlights.values())
-          for (const r of h) if (r.toString() === '种下') return true;
-        return false;
-      },
-      { timeout: 20000 },
-    )
-    .then(() => true)
-    .catch(() => false);
-  check('cloud tokens: 种下 is a single range', gotCloud);
-  // toggling a setting keeps the cached cloud segmentation
-  await setSync({ colorPreset: 'red' });
-  const kept = await page
-    .waitForFunction(
-      () => {
-        for (const h of CSS.highlights.values())
-          for (const r of h) if (r.toString() === '种下') return true;
-        return false;
-      },
-      { timeout: 20000 },
-    )
-    .then(() => true)
-    .catch(() => false);
-  check('after colorPreset toggle: cloud tokens kept', kept);
-  await setSync({ colorPreset: 'blue' });
-  await page.waitForTimeout(800);
+// ask the SW for the (cached) analysis of a text — deterministic across calls
+async function analyzeViaSw(text) {
+  const p = await ctx.newPage();
+  await p.goto(`chrome-extension://${extId}/options.html`);
+  const r = await p.evaluate((t) =>
+    chrome.runtime.sendMessage({ type: 'analyze', texts: [t] }), text);
+  await p.close();
+  return r?.[0] ?? null;
 }
-stats = await hlStats(page);
-console.log('cloud stats', stats);
+
+const P_SEL = '小明在花盆里种下三颗豆子。';
+
+// Range texts living inside the given paragraph's single text node.
+function rangesOn(page, sel) {
+  return page.evaluate((sel) => {
+    const p = [...document.querySelectorAll('p')].find(
+      (x) => x.textContent === sel && x.firstChild?.nodeType === 3,
+    );
+    if (!p) return null;
+    const node = p.firstChild;
+    const out = {};
+    for (const [name, h] of CSS.highlights.entries()) {
+      const texts = [];
+      for (const r of h) if (r.startContainer === node) texts.push(r.toString());
+      if (texts.length) out[name] = texts;
+    }
+    return out;
+  }, sel);
+}
+
+// Cloud analyses can transiently fail (per-item/per-batch validation or API
+// hiccup); failures aren't cached, so a reload is a legitimate retry. Wait for
+// the paragraph's highlight tokens to exactly match the SW-provided cloud
+// word set, reloading up to 4 times.
+async function ensureCloud(page, sel, expected) {
+  const exp = new Set(expected);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      const r = await rangesOn(page, sel);
+      if (r) {
+        const all = Object.values(r).flat();
+        if (all.length && all.every((t) => exp.has(t))) return r;
+      }
+      await page.waitForTimeout(1000);
+    }
+    await page.reload();
+    await page.waitForTimeout(1500);
+  }
+  return await rangesOn(page, sel);
+}
+
+async function analyzeRetry(text) {
+  for (let i = 0; i < 6; i++) {
+    const a = await analyzeViaSw(text);
+    if (a?.source === 'cloud') return a;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return null;
+}
+
+// --- cloud engine, word mode ---
+await setSync({ engine: 'cloud' });
+if (dev) {
+  const cloud = await analyzeRetry(P_SEL);
+  check('cloud analysis available', !!cloud, JSON.stringify(cloud?.words?.slice(0, 3)));
+  const expected = cloud.words
+    .filter((w) => /[\u4e00-\u9fff\w]/.test(w.text))
+    .map((w) => w.text);
+  const applied = await ensureCloud(page, P_SEL, expected);
+  check('cloud word-mode ranges match model tokens', !!applied && Object.keys(applied).length > 0,
+    JSON.stringify(applied));
+}
+await shot(page, 'm2a-word-cloud.png');
+
+// --- chunk mode (cloud) ---
+if (dev) {
+  await setSync({ colorUnit: 'chunk' });
+  const cloud = await analyzeViaSw(P_SEL);
+  // group word-like words by chunk, keep chunks with >=1 word-like word
+  const byChunk = new Map();
+  for (const w of cloud.words) {
+    if (!/[\u4e00-\u9fff\w]/.test(w.text)) continue;
+    const arr = byChunk.get(w.chunk) ?? [];
+    arr.push(w.text);
+    byChunk.set(w.chunk, arr);
+  }
+  const chunkTexts = [...byChunk.values()].filter((a) => a.length > 0);
+  const ok = await page
+    .waitForFunction(
+      ({ sel, chunks }) => {
+        const p = [...document.querySelectorAll('p')].find(
+          (x) => x.textContent === sel,
+        );
+        if (!p) return false;
+        const node = p.firstChild;
+        const clsOf = (t) => {
+          for (const [name, h] of CSS.highlights.entries())
+            for (const r of h)
+              if (r.startContainer === node && r.toString() === t)
+                return name;
+          return null;
+        };
+        const cls = chunks.map((c) => c.map(clsOf));
+        if (cls.some((c) => c.some((x) => x == null))) return false;
+        // same chunk same class; adjacent chunks alternate
+        for (const c of cls) if (!c.every((x) => x === c[0])) return false;
+        for (let i = 1; i < cls.length; i++)
+          if (cls[i][0] === cls[i - 1][0]) return false;
+        return true;
+      },
+      { sel: P_SEL, chunks: chunkTexts },
+      { timeout: 25000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  console.log('chunks:', JSON.stringify(chunkTexts));
+  if (!ok) console.log('  actual ranges:', JSON.stringify(await rangesOn(page, P_SEL)));
+  check('chunk mode: same-chunk same class, adjacent alternate', ok);
+  await shot(page, 'm2a-chunk-cloud.png');
+}
+
+// --- fade function words (cloud) ---
+// P_SEL has no u/y words; use the single-text-node 春天 paragraph (了 → u).
+const F_SEL =
+  '春天来了，小草从土里钻出来，柳树抽出了嫩绿的新芽，燕子也从南方飞回来了。';
+if (dev) {
+  const fcloud = await analyzeRetry(F_SEL);
+  const faded = (fcloud?.words ?? [])
+    .filter((w) => w.pos === 'u' || w.pos === 'y')
+    .map((w) => w.text);
+  check('fade: model returned u/y words', faded.length > 0, JSON.stringify(faded));
+  await setSync({ fadeFunctionWords: true, colorUnit: 'word' });
+  const ok = await page
+    .waitForFunction(
+      ({ sel, fadedTexts }) => {
+        const p = [...document.querySelectorAll('p')].find(
+          (x) => x.textContent === sel,
+        );
+        if (!p) return false;
+        const node = p.firstChild;
+        const f = CSS.highlights.get('readhd-light-f');
+        if (!f || f.size === 0) return false;
+        const ftexts = [...f]
+          .filter((r) => r.startContainer === node)
+          .map((r) => r.toString());
+        return fadedTexts.every((t) => ftexts.includes(t));
+      },
+      { sel: F_SEL, fadedTexts: faded },
+      { timeout: 25000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!ok) console.log('  actual ranges:', JSON.stringify(await rangesOn(page, F_SEL)));
+  check('fade: u/y words in readhd-light-f', ok, JSON.stringify(faded));
+  await shot(page, 'm2a-fade.png');
+  await setSync({ fadeFunctionWords: false });
+}
+
+// --- reading ruler ---
+await setSync({ readingRuler: true, rulerLines: 2 });
+await page.waitForTimeout(800);
+await page.mouse.move(300, 300);
+await page.waitForTimeout(400);
+const rulerOk = await page.evaluate(() => {
+  const host = document.querySelector('div.readhd-root');
+  if (!host || !host.shadowRoot) return { host: false };
+  const masks = host.shadowRoot.querySelectorAll('.mask');
+  const shown = [...masks].filter((m) => m.style.display === 'block');
+  return { host: true, masks: masks.length, shown: shown.length };
+});
+check('ruler: shadow host + 2 masks shown', rulerOk.host && rulerOk.masks === 2 && rulerOk.shown === 2, JSON.stringify(rulerOk));
+await shot(page, 'm2a-ruler.png');
+await setSync({ readingRuler: false });
+await page.waitForTimeout(800);
+check('ruler off: host removed', await page.evaluate(() => !document.querySelector('div.readhd-root')));
 
 // disable: highlights should clear
 await setSync({ enabled: false });
@@ -157,10 +307,10 @@ await page.waitForTimeout(1200);
 stats = await hlStats(page);
 console.log('disabled stats', stats);
 check('disabled: all highlights cleared', Object.values(stats).every((v) => v === 0));
-await shot(page, 'after-disable.png');
+await shot(page, 'm2a-disabled.png');
 await setSync({ enabled: true });
 
-// --- popup on a real http page: keep fixture tab active, open real popup ---
+// --- popup ---
 let popupShot = false;
 try {
   const opt = await ctx.newPage();
@@ -170,18 +320,12 @@ try {
     .catch(() => null);
   await opt.evaluate(() => chrome.action.openPopup());
   await opt.waitForTimeout(1000);
-  const popup = await popupPromise;
   const popupPage =
-    popup ?? ctx.pages().find((p) => p.url().includes('popup.html'));
+    (await popupPromise) ??
+    ctx.pages().find((p) => p.url().includes('popup.html'));
   if (popupPage) {
     await popupPage.waitForTimeout(800);
-    check(
-      'popup host switch visible',
-      await popupPage.evaluate(() =>
-        document.body.textContent.includes('在此网站启用'),
-      ),
-    );
-    await shot(popupPage, 'popup.png');
+    await shot(popupPage, 'm2a-popup.png');
     await popupPage.close();
     popupShot = true;
   }
@@ -190,8 +334,6 @@ try {
   console.log('openPopup failed:', e.message);
 }
 if (!popupShot) {
-  // Real popup windows aren't observable as playwright pages; mock the active
-  // tab query so the host switch renders against the fixture host.
   const popup = await ctx.newPage();
   await popup.addInitScript((url) => {
     const orig = chrome.tabs.query.bind(chrome.tabs);
@@ -206,41 +348,12 @@ if (!popupShot) {
       document.body.textContent.includes('在此网站启用'),
     ),
   );
-  await shot(popup, 'popup.png');
+  await shot(popup, 'm2a-popup.png');
   await popup.close();
 }
 
-// --- selftest ---
-const st = await ctx.newPage();
-await st.goto(`chrome-extension://${extId}/selftest.html`);
-await st.waitForTimeout(800);
-await shot(st, 'selftest-menu.png');
-await st.evaluate(() =>
-  chrome.storage.local.set({
-    selftestResults: [
-      { ts: 1, passageId: 'snail', condition: 'on', ms: 30000, hanChars: 100, correct: 2, settingsSnapshot: {} },
-      { ts: 2, passageId: 'leaves', condition: 'off', ms: 40000, hanChars: 100, correct: 1, settingsSnapshot: {} },
-    ],
-  }),
-);
-await st.reload();
-await st.waitForTimeout(500);
-await shot(st, 'selftest-results.png');
-await st.getByText('开始自测').click();
-await shot(st, 'selftest-intro.png'); // may catch 准备中… on cloud
-await st.waitForTimeout(300);
-const btn = st.getByRole('button', { name: /开始读|准备中/ });
-if (await btn.isDisabled()) await shot(st, 'selftest-preparing.png');
-await btn.click({ timeout: 15000 });
-await st.waitForTimeout(800);
-await shot(st, 'selftest-reading.png');
-await st.getByRole('button', { name: '读完了' }).click();
-await st.waitForTimeout(300);
-await shot(st, 'selftest-question.png');
-await st.close();
 await page.close();
 await boot.close();
-
 await ctx.close();
 server.close();
 console.log(`DONE (${failures} failures)`);

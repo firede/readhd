@@ -21,12 +21,24 @@ export function extractJsonArray(text: string): unknown[] | null {
   const first = text.indexOf('[');
   const last = text.lastIndexOf(']');
   if (first < 0 || last <= first) return null;
-  try {
-    const parsed = JSON.parse(text.slice(first, last + 1));
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
+  const s = text.slice(first, last + 1);
+  // Models occasionally drop a few trailing ']' (truncated output). Try the
+  // slice as-is, then padded with brackets, then cut at earlier ']' positions.
+  let cut = s.length;
+  for (let cuts = 0; cuts < 64 && cut > 0; cuts++) {
+    for (let pad = 0; pad <= 8; pad++) {
+      try {
+        const parsed = JSON.parse(s.slice(0, cut) + ']'.repeat(pad));
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // keep repairing
+      }
+    }
+    const next = s.lastIndexOf(']', cut - 1);
+    if (next < 0) break;
+    cut = next + 1;
   }
+  return null;
 }
 
 /**

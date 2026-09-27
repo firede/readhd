@@ -10,15 +10,7 @@ export const BG_THEME_COLORS: Record<Exclude<BgTheme, 'none'>, string> = {
   blue: '#EAF2FA',
 };
 
-export interface SelftestRecord {
-  ts: number;
-  passageId: string;
-  condition: 'on' | 'off';
-  ms: number;
-  hanChars: number;
-  correct: number;
-  settingsSnapshot: Record<string, unknown>;
-}
+export type ColorUnit = 'word' | 'chunk';
 
 // sync items
 export const enabled = storage.defineItem<boolean>('sync:enabled', {
@@ -49,6 +41,19 @@ export const fontScale = storage.defineItem<number | null>('sync:fontScale', {
 export const bgTheme = storage.defineItem<BgTheme>('sync:bgTheme', {
   fallback: 'none',
 });
+export const colorUnit = storage.defineItem<ColorUnit>('sync:colorUnit', {
+  fallback: 'word',
+});
+export const fadeFunctionWords = storage.defineItem<boolean>(
+  'sync:fadeFunctionWords',
+  { fallback: false },
+);
+export const readingRuler = storage.defineItem<boolean>('sync:readingRuler', {
+  fallback: false,
+});
+export const rulerLines = storage.defineItem<1 | 2 | 3>('sync:rulerLines', {
+  fallback: 2,
+});
 
 // local items
 export const apiKey = storage.defineItem<string>('local:apiKey', {
@@ -60,54 +65,52 @@ export const apiBase = storage.defineItem<string>('local:apiBase', {
 export const model = storage.defineItem<string>('local:model', {
   fallback: 'MiniMax-M3',
 });
-export const selftestResults = storage.defineItem<SelftestRecord[]>(
-  'local:selftestResults',
-  { fallback: [] },
-);
-
 export interface StyleSettings {
   enabled: boolean;
   disabledHosts: string[];
   altColor: boolean;
   colorPreset: ColorPreset;
+  colorUnit: ColorUnit;
+  fadeFunctionWords: boolean;
   engine: Engine;
   lineHeight: number | null;
   letterSpacing: number | null;
   fontScale: number | null;
   bgTheme: BgTheme;
+  readingRuler: boolean;
+  rulerLines: 1 | 2 | 3;
 }
 
 export async function getStyleSettings(): Promise<StyleSettings> {
-  const [
-    en,
-    hosts,
-    alt,
-    preset,
-    eng,
-    lh,
-    ls,
-    fs,
-    bg,
-  ] = await Promise.all([
-    enabled.getValue(),
-    disabledHosts.getValue(),
-    altColor.getValue(),
-    colorPreset.getValue(),
-    engine.getValue(),
-    lineHeight.getValue(),
-    letterSpacing.getValue(),
-    fontScale.getValue(),
-    bgTheme.getValue(),
-  ]);
+  const [en, hosts, alt, preset, unit, fade, eng, lh, ls, fs, bg, ruler, rl] =
+    await Promise.all([
+      enabled.getValue(),
+      disabledHosts.getValue(),
+      altColor.getValue(),
+      colorPreset.getValue(),
+      colorUnit.getValue(),
+      fadeFunctionWords.getValue(),
+      engine.getValue(),
+      lineHeight.getValue(),
+      letterSpacing.getValue(),
+      fontScale.getValue(),
+      bgTheme.getValue(),
+      readingRuler.getValue(),
+      rulerLines.getValue(),
+    ]);
   return {
     enabled: en,
     disabledHosts: hosts,
     altColor: alt,
     colorPreset: preset,
+    colorUnit: unit,
+    fadeFunctionWords: fade,
     engine: eng,
     lineHeight: lh,
     letterSpacing: ls,
     fontScale: fs,
     bgTheme: bg,
+    readingRuler: ruler,
+    rulerLines: rl,
   };
 }

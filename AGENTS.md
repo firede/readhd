@@ -15,16 +15,17 @@ school-age children with reading difficulties.
 ## Layout
 
 - `src/entrypoints/content.ts` — collection/lazy processing/highlight rendering
-- `src/entrypoints/background.ts` — cloud segmentation batching worker
-- `src/entrypoints/popup|options|selftest/` — React UI pages
-- `src/lib/` — pure modules (settings, segment-align, paragraphs,
-  selftest-logic, highlight, segmenter)
-- `src/selftest/passages.json` — self-test passages (do not edit format)
+- `src/entrypoints/background.ts` — cloud analysis batching worker (word/POS/chunk)
+- `src/entrypoints/popup|options/` — React UI pages
+- `src/lib/` — pure modules (settings, segment-align, analysis, marks,
+  paragraphs, highlight, analyzer)
 - `tests/` — unit tests
 
 ## Notes
 
 - Cloud endpoint: `${apiBase}/v1/messages` (Anthropic-compatible), auth via
-  `x-api-key`. Default apiBase `https://api.minimax.cn/anthropic`.
+  `x-api-key`. Default apiBase `https://api.minimax.cn/anthropic`. The model
+  returns per-paragraph chunk arrays of `[word, pos]` pairs
+  (`ANALYZE_SYSTEM_PROMPT` in `src/lib/analyze-prompt.ts`).
 - `process.env.MINIMAX_API_KEY` is inlined only in development builds; always
   empty in production.

@@ -8,17 +8,19 @@ import {
   ensureHighlightsRegistered,
   highlightCss,
   isDarkBlock,
-  isWordLike,
+  effectiveBackground,
+  luminanceOf,
   setRanges,
   clearAllRanges,
   type HighlightName,
 } from '../lib/highlight';
+import { planMarks } from '../lib/marks';
 import {
-  segmentParagraphLocal,
-  segmentParagraphCloud,
+  analyzeParagraphLocal,
+  analyzeParagraphCloud,
   getParagraphCloud,
-} from '../lib/segmenter';
-import type { TokenSpan } from '../lib/segment-align';
+} from '../lib/analyzer';
+import type { Analysis } from '../lib/analysis';
 import {
   BG_THEME_COLORS,
   getStyleSettings,
@@ -26,6 +28,10 @@ import {
   disabledHosts,
   altColor,
   colorPreset,
+  colorUnit,
+  fadeFunctionWords,
+  readingRuler,
+  rulerLines,
   engine,
   lineHeight,
   letterSpacing,
@@ -83,21 +89,21 @@ export default defineContentScript({
       );
     }
 
-    function renderParagraph(p: Paragraph, spans: TokenSpan[]): void {
-      if (!settings || !settings.altColor) {
+    function renderParagraph(p: Paragraph, analysis: Analysis): void {
+      if (!settings || (!settings.altColor && !settings.fadeFunctionWords)) {
         setRanges(p.block, []);
         return;
       }
       const theme: 'light' | 'dark' = isDarkBlock(p.block) ? 'dark' : 'light';
       const entries: { range: Range; name: HighlightName }[] = [];
-      let toggle = false;
-      for (const span of spans) {
-        if (!isWordLike(span.text)) continue;
-        const name: HighlightName = toggle
-          ? (`readhd-${theme}-b` as HighlightName)
-          : (`readhd-${theme}-a` as HighlightName);
-        toggle = !toggle;
-        for (const ref of mapRangeToNodes(p, span.start, span.end)) {
+      const marks = planMarks(analysis.words, {
+        alternate: settings.altColor,
+        unit: settings.colorUnit,
+        fade: settings.fadeFunctionWords,
+      });
+      for (const mark of marks) {
+        const name = `readhd-${theme}-${mark.cls}` as HighlightName;
+        for (const ref of mapRangeToNodes(p, mark.start, mark.end)) {
           const r = document.createRange();
           r.setStart(ref.node, ref.start);
           r.setEnd(ref.node, ref.end);
@@ -111,10 +117,10 @@ export default defineContentScript({
       const p = paragraphs.get(block);
       if (!p || !settings) return;
       const cached = getParagraphCloud(p.text);
-      renderParagraph(p, cached ?? segmentParagraphLocal(p.text));
+      renderParagraph(p, cached ?? analyzeParagraphLocal(p.text));
       if (settings.engine === 'cloud' && !cached) {
-        const spans = await segmentParagraphCloud(p.text);
-        if (paragraphs.get(block) === p) renderParagraph(p, spans);
+        const analysis = await analyzeParagraphCloud(p.text);
+        if (paragraphs.get(block) === p) renderParagraph(p, analysis);
       }
     }
 
@@ -186,6 +192,87 @@ export default defineContentScript({
       paragraphs.clear();
       styleEl?.remove();
       styleEl = null;
+      teardownRuler();
+    }
+
+    // --- reading ruler ---
+    let rulerHost: HTMLDivElement | null = null;
+    let rulerTop: HTMLDivElement | null = null;
+    let rulerBottom: HTMLDivElement | null = null;
+    let rulerY = 0;
+    let rulerLineH = 24;
+    let rulerVisible = false;
+    let rulerScheduled = false;
+    let onMouseMove: ((e: MouseEvent) => void) | null = null;
+    let onMouseLeave: (() => void) | null = null;
+
+    function setupRuler(): void {
+      if (rulerHost || !settings) return;
+      const dark =
+        (luminanceOf(effectiveBackground(document.body)) ?? 1) < 0.4;
+      rulerHost = document.createElement('div');
+      rulerHost.className = 'readhd-root';
+      const shadow = rulerHost.attachShadow({ mode: 'open' });
+      const style = document.createElement('style');
+      style.textContent = `
+        .mask{position:fixed;left:0;right:0;pointer-events:none;z-index:2147483647;background:rgba(0,0,0,${dark ? '0.55' : '0.35'});display:none}
+        #top{top:0}#bot{bottom:0}`;
+      rulerTop = document.createElement('div');
+      rulerBottom = document.createElement('div');
+      rulerTop.className = 'mask';
+      rulerTop.id = 'top';
+      rulerBottom.className = 'mask';
+      rulerBottom.id = 'bot';
+      shadow.append(style, rulerTop, rulerBottom);
+      document.documentElement.appendChild(rulerHost);
+
+      onMouseMove = (e: MouseEvent) => {
+        rulerY = e.clientY;
+        rulerVisible = true;
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        if (el) {
+          const cs = getComputedStyle(el);
+          let lineH = parseFloat(cs.lineHeight);
+          if (Number.isNaN(lineH)) {
+            lineH = 1.4 * (parseFloat(cs.fontSize) || 16);
+          }
+          lineH = Math.min(80, Math.max(16, lineH));
+          rulerLineH = lineH;
+        }
+        if (!rulerScheduled) {
+          rulerScheduled = true;
+          requestAnimationFrame(paintRuler);
+        }
+      };
+      onMouseLeave = () => {
+        rulerVisible = false;
+        paintRuler();
+      };
+      document.addEventListener('mousemove', onMouseMove, { passive: true });
+      document.addEventListener('mouseleave', onMouseLeave);
+    }
+
+    function paintRuler(): void {
+      rulerScheduled = false;
+      if (!rulerTop || !rulerBottom || !settings) return;
+      const h = rulerLineH * settings.rulerLines;
+      const top = rulerY - h / 2;
+      const bottom = rulerY + h / 2;
+      rulerTop.style.display = rulerVisible ? 'block' : 'none';
+      rulerBottom.style.display = rulerVisible ? 'block' : 'none';
+      rulerTop.style.height = `${Math.max(0, top)}px`;
+      rulerBottom.style.top = `${Math.max(0, bottom)}px`;
+    }
+
+    function teardownRuler(): void {
+      if (onMouseMove) document.removeEventListener('mousemove', onMouseMove);
+      if (onMouseLeave) document.removeEventListener('mouseleave', onMouseLeave);
+      onMouseMove = null;
+      onMouseLeave = null;
+      rulerHost?.remove();
+      rulerHost = null;
+      rulerTop = null;
+      rulerBottom = null;
     }
 
     function init(): void {
@@ -239,6 +326,7 @@ export default defineContentScript({
         subtree: true,
       });
       collectAll();
+      if (settings.readingRuler) setupRuler();
     }
 
     async function reload(): Promise<void> {
@@ -253,6 +341,10 @@ export default defineContentScript({
       disabledHosts,
       altColor,
       colorPreset,
+      colorUnit,
+      fadeFunctionWords,
+      readingRuler,
+      rulerLines,
       engine,
       lineHeight,
       letterSpacing,

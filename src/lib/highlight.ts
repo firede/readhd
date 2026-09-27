@@ -7,8 +7,10 @@ import type { ColorPreset } from './settings';
 export const HIGHLIGHT_NAMES = [
   'readhd-light-a',
   'readhd-light-b',
+  'readhd-light-f',
   'readhd-dark-a',
   'readhd-dark-b',
+  'readhd-dark-f',
 ] as const;
 
 export type HighlightName = (typeof HIGHLIGHT_NAMES)[number];
@@ -40,6 +42,8 @@ export function ensureHighlightsRegistered(): void {
   }
 }
 
+const FADE_COLORS = { light: '#6b7280', dark: '#9ca3af' } as const;
+
 /** Colors for ::highlight rules, per theme/preset. */
 export function highlightCss(preset: ColorPreset): string {
   const [la, lb] = PAIRS.light[preset];
@@ -47,8 +51,10 @@ export function highlightCss(preset: ColorPreset): string {
   return [
     `::highlight(readhd-light-a){color:${la}}`,
     `::highlight(readhd-light-b){color:${lb}}`,
+    `::highlight(readhd-light-f){color:${FADE_COLORS.light}}`,
     `::highlight(readhd-dark-a){color:${da}}`,
     `::highlight(readhd-dark-b){color:${db}}`,
+    `::highlight(readhd-dark-f){color:${FADE_COLORS.dark}}`,
   ].join('\n');
 }
 

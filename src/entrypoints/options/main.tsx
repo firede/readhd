@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { apiBase, apiKey, model } from '../../lib/settings';
-import { segmentCloudCached } from '../../lib/segmenter';
+import { analyzeCloudCached } from '../../lib/analyzer';
 
 const TEST_TEXT = '小明在花盆里种下三颗豆子。';
 
@@ -24,9 +24,18 @@ function Options() {
     setTesting(true);
     setResult('测试中…');
     try {
-      const spans = await segmentCloudCached(TEST_TEXT);
-      if (spans) {
-        setResult(`成功：${spans.map((s) => s.text).join(' | ')}`);
+      const analysis = await analyzeCloudCached(TEST_TEXT);
+      if (analysis) {
+        // group words by chunk: 小明/n 今天/n | 在/p 花盆/n 里/n | …
+        const byChunk = new Map<number, string[]>();
+        let cur = -1;
+        for (const w of analysis.words) {
+          const ci = w.chunk ?? ++cur;
+          const list = byChunk.get(ci) ?? [];
+          list.push(`${w.text}/${w.pos ?? '-'}`);
+          byChunk.set(ci, list);
+        }
+        setResult(`成功：${[...byChunk.values()].map((ws) => ws.join(' ')).join(' | ')}`);
       } else {
         setResult('失败：云端未返回有效分词（请检查 API Key / 接口地址）');
       }
