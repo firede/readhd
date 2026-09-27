@@ -18,11 +18,69 @@ const server = createServer((req, res) => {
   if (req.url === '/article.html') return res.end(article);
   if (req.url === '/bare.html')
     return res.end('<!doctype html><html><body><p>很短。</p></body></html>');
+  if (req.url === '/f2.html')
+    return res.end(
+      '<!doctype html><html><body><p>秋天的田野里，稻谷已经成熟了。</p></body></html>',
+    );
+  if (req.url === '/f3.html')
+    return res.end(
+      '<!doctype html><html><body><p>冬天到了，小河结了一层薄冰。</p></body></html>',
+    );
   res.end(fixture);
 });
 await new Promise((r) => server.listen(0, r));
 const port = server.address().port;
 const fixtureUrl = `http://127.0.0.1:${port}/fixture.html`;
+
+// Mock OpenAI-compatible provider (records request shape, returns chunked
+// analyses covering each input's non-whitespace characters).
+const mockCalls = [];
+let mockStatus = 200;
+const mockApi = createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => (body += c));
+  req.on('end', () => {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(body);
+    } catch {}
+    mockCalls.push({ url: req.url, auth: req.headers.authorization, body: parsed });
+    res.setHeader('content-type', 'application/json');
+    res.statusCode = mockStatus;
+    if (mockStatus !== 200) {
+      res.end(JSON.stringify({ error: { message: 'unauthorized' } }));
+      return;
+    }
+    const user = parsed?.messages?.find((m) => m.role === 'user')?.content;
+    let inputs = [];
+    try {
+      inputs = JSON.parse(user);
+    } catch {}
+    const items = (Array.isArray(inputs) ? inputs : []).map((t) => {
+      const words = (String(t).replace(/\s+/g, '') || 'x').match(
+        /[\s\S]{1,4}/g,
+      );
+      const chunks = [];
+      for (let i = 0; i < words.length; i += 2)
+        chunks.push(words.slice(i, i + 2).map((w) => [w, 'n']));
+      return chunks;
+    });
+    res.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: { role: 'assistant', content: JSON.stringify(items) },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 123, completion_tokens: 45 },
+      }),
+    );
+  });
+});
+await new Promise((r) => mockApi.listen(0, '127.0.0.1', r));
+const mockPort = mockApi.address().port;
+const mockBase = `http://127.0.0.1:${mockPort}`;
 
 const profile = mkdtempSync(join(tmpdir(), 'readhd-prof-'));
 const ctx = await chromium.launchPersistentContext(profile, {
@@ -55,6 +113,21 @@ async function setSync(kv) {
   await p.goto(`chrome-extension://${extId}/options.html`);
   await p.evaluate((kv) => chrome.storage.sync.set(kv), kv);
   await p.close();
+}
+
+async function setLocal(kv) {
+  const p = await ctx.newPage();
+  await p.goto(`chrome-extension://${extId}/options.html`);
+  await p.evaluate((kv) => chrome.storage.local.set(kv), kv);
+  await p.close();
+}
+
+async function getLocal(key) {
+  const p = await ctx.newPage();
+  await p.goto(`chrome-extension://${extId}/options.html`);
+  const v = await p.evaluate((k) => chrome.storage.local.get(k), key);
+  await p.close();
+  return v?.[key];
 }
 
 async function shot(page, name) {
@@ -357,7 +430,7 @@ if (!popupShot) {
   check(
     'popup host switch visible (mocked active tab)',
     await popup.evaluate(() =>
-      document.body.textContent.includes('在此网站启用'),
+      /上启用|此页面不支持/.test(document.body.textContent),
     ),
   );
   await shot(popup, 'm2a-popup.png');
@@ -368,26 +441,51 @@ if (!popupShot) {
 async function toggleReaderOn(pageUrl) {
   const opt = await ctx.newPage();
   await opt.goto(`chrome-extension://${extId}/options.html`);
-  await opt.evaluate(
-    (url) =>
-      chrome.tabs
-        .query({})
-        .then((tabs) =>
-          chrome.tabs.sendMessage(tabs.find((t) => t.url === url).id, {
-            type: 'toggleReader',
-          }),
+  // Prod builds lack host permissions for 127.0.0.1, so tab.url is masked;
+  // broadcast instead — only the article page has enough text to open.
+  await opt.evaluate(() =>
+    chrome.tabs.query({}).then((tabs) =>
+      Promise.allSettled(
+        tabs.map((t) =>
+          chrome.tabs.sendMessage(t.id, { type: 'toggleReader' }),
         ),
-    pageUrl,
+      ),
+    ),
   );
   await opt.close();
 }
 
-await setSync({ engine: 'cloud', enabled: true, readerGap: 'none' });
+await setSync({
+  engine: 'cloud',
+  enabled: true,
+  readerGap: 'none',
+  colorUnit: 'chunk',
+});
 const ap = await ctx.newPage();
 await ap.goto(`http://127.0.0.1:${port}/article.html`);
 await ap.waitForTimeout(1200);
 await toggleReaderOn(ap.url());
 await ap.waitForTimeout(1500);
+// wait for cloud analyses to arrive in the reader (dev hook) so screenshots
+// show real chunk coloring rather than the initial local render
+if (dev) {
+  await ap
+    .waitForFunction(
+      () => {
+        const sr = document.querySelector(
+          'div.readhd-root#readhd-reader',
+        )?.shadowRoot;
+        const dbg = JSON.parse(
+          sr?.querySelector('#readhd-dbg')?.textContent || '[]',
+        );
+        const cloud = dbg.filter((r) => r.analysis?.source === 'cloud').length;
+        return dbg.length > 0 && cloud >= Math.ceil(dbg.length * 0.75);
+      },
+      { timeout: 45000 },
+    )
+    .catch(() => console.log('reader cloud wait timed out'));
+  await ap.waitForTimeout(500);
+}
 
 const readerInfo = await ap.evaluate(() => {
   const host = document.querySelector('div.readhd-root#readhd-reader');
@@ -410,6 +508,30 @@ check('reader: no script/onclick in content', !readerInfo.hasScript && !readerIn
 check('reader: word spans a/b present', readerInfo.wA > 0 && readerInfo.wB > 0);
 check('reader: page scroll locked', readerInfo.htmlOverflow === 'hidden');
 await shot(ap, 'm2b-reader-word.png');
+
+// reader top bar: Aa popover opens, progress bar fills on scroll
+const uiInfo = await ap.evaluate(() => {
+  const sr = document.querySelector('div.readhd-root#readhd-reader')
+    ?.shadowRoot;
+  if (!sr) return {};
+  const aa = [...sr.querySelectorAll('.bar button')].find(
+    (b) => b.textContent.trim() === 'Aa',
+  );
+  aa?.click();
+  const scroller = sr.querySelector('.scroll');
+  scroller.scrollTop = scroller.scrollHeight / 2;
+  scroller.dispatchEvent(new Event('scroll'));
+  return {
+    popOpen: sr.querySelector('.pop')?.classList.contains('open') ?? false,
+    gapSeg: [...sr.querySelectorAll('.pop .seg')].length,
+    fillW: sr.querySelector('.prog .fill')?.style.width ?? '',
+    barHiddenAfterScroll: sr.querySelector('.bar')?.classList.contains('hidden'),
+  };
+});
+check('reader: Aa popover + 间隔/标色 segmented', uiInfo.popOpen === true && uiInfo.gapSeg >= 2, JSON.stringify(uiInfo));
+check('reader: progress bar fills + bar hides on scroll down',
+  uiInfo.fillW !== '' && uiInfo.fillW !== '0%', JSON.stringify(uiInfo));
+await shot(ap, 'm3-reader-top.png');
 
 // chunk gaps (cloud): some span.w gets margin-inline-end, and no margined
 // span is directly followed by punctuation. The model sometimes returns zero
@@ -512,6 +634,23 @@ check(
 );
 await shot(ap, 'm2b-reader-tts.png');
 
+// TTS pill visual (forced visible — headless has no zh voices to drive the
+// real state machine; the pill's appearance is what we are capturing)
+await ap.evaluate(() => {
+  const sr = document.querySelector('div.readhd-root#readhd-reader')
+    ?.shadowRoot;
+  sr?.querySelector('.ttspill')?.classList.add('on');
+});
+await ap.waitForTimeout(200);
+await shot(ap, 'm3-reader-tts-pill.png');
+await ap.evaluate(() => {
+  const sr = document.querySelector('div.readhd-root#readhd-reader')
+    ?.shadowRoot;
+  sr?.querySelector('.ttspill')?.classList.remove('on');
+  // close popover so Esc closes the reader in one press
+  sr?.querySelector('.pop')?.classList.remove('open');
+});
+
 // Esc closes and restores html overflow
 await ap.keyboard.press('Escape');
 await ap.waitForTimeout(600);
@@ -543,7 +682,7 @@ await ap.close();
 // options page with voice picker
 {
   const opt = await ctx.newPage();
-  await opt.goto(`chrome-extension://${extId}/options.html`);
+  await opt.goto(`chrome-extension://${extId}/options.html#tts`);
   await opt.waitForTimeout(1000);
   check(
     'options: voice picker + rate slider',
@@ -553,9 +692,212 @@ await ap.close();
   await opt.close();
 }
 
+// --- M3: provider mock, usage records, lastError, storage isolation ---
+const manifest = JSON.parse(
+  readFileSync(join(extDir, 'manifest.json'), 'utf8'),
+);
+check(
+  'prod manifest has no local host permissions',
+  dev ||
+    !(manifest.host_permissions ?? []).some(
+      (h) => h.includes('127.0.0.1') || h.includes('localhost'),
+    ),
+);
+
+if (dev) {
+  // content-script world cannot read storage.local (TRUSTED_CONTEXTS)
+  const probe = await ctx.newPage();
+  await probe.goto(`http://127.0.0.1:${port}/bare.html`);
+  await probe.waitForTimeout(1500);
+  const lr = await probe.evaluate(
+    () => document.getElementById('readhd-dbg')?.dataset.localRead ?? 'missing',
+  );
+  check('content script cannot read storage.local', lr.startsWith('err:'), lr);
+  await probe.close();
+
+  // custom OpenAI-compatible provider via storage → mock server
+  await setLocal({
+    'providerConfigs': {
+      'custom-openai': { apiKey: 'mock-key', baseUrl: mockBase, model: 'mock-model' },
+    },
+    'activeProvider': 'custom-openai',
+  });
+  await setSync({ engine: 'cloud', colorUnit: 'chunk' });
+  const mp = await ctx.newPage();
+  await mp.goto(`http://127.0.0.1:${port}/f2.html`);
+  let waited = 0;
+  while (mockCalls.length === 0 && waited++ < 30) {
+    await mp.waitForTimeout(500);
+  }
+  const mc = mockCalls.find((c) => c.url === '/chat/completions');
+  check(
+    'mock openai: request shape (path, Bearer, system+user, no thinking body)',
+    !!mc &&
+      mc.auth === 'Bearer mock-key' &&
+      mc.body?.model === 'mock-model' &&
+      mc.body?.messages?.[0]?.role === 'system' &&
+      mc.body?.messages?.[1]?.role === 'user' &&
+      mc.body?.messages?.[1]?.content?.includes('秋天的田野') &&
+      !('thinking' in (mc.body ?? {})) &&
+      !('enable_thinking' in (mc.body ?? {})),
+    JSON.stringify({ url: mc?.url, auth: mc?.auth, model: mc?.body?.model }),
+  );
+  // response parsed → cloud analysis rendered on the page
+  const mockCloud = await mp
+    .waitForFunction(
+      () => {
+        const dbg = JSON.parse(
+          document.getElementById('readhd-dbg')?.textContent || '{}',
+        );
+        return Object.values(dbg).some((a) => a?.source === 'cloud');
+      },
+      { timeout: 15000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('mock openai: response parsed and rendered', mockCloud);
+  await mp.close();
+
+  // usage records written
+  const ulog = (await getLocal('usageLog')) ?? [];
+  const mockEntry = ulog.find(
+    (e) => e.providerId === 'custom-openai' && e.model === 'mock-model',
+  );
+  check(
+    'usage: entry logged with mock token counts',
+    !!mockEntry &&
+      mockEntry.ok === true &&
+      mockEntry.inputTokens === 123 &&
+      mockEntry.outputTokens === 45,
+    JSON.stringify(mockEntry),
+  );
+  const ud = (await getLocal('usageDaily')) ?? {};
+  const now = new Date();
+  const dayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  check(
+    'usage: daily rollup updated',
+    (ud[dayKey]?.['mock-model']?.requests ?? 0) >= 1,
+    JSON.stringify(ud[dayKey]),
+  );
+
+  // 401 → lastError with friendly message
+  mockStatus = 401;
+  const fp = await ctx.newPage();
+  await fp.goto(`http://127.0.0.1:${port}/f3.html`);
+  let le = null;
+  for (let i = 0; i < 40; i++) {
+    le = await getLocal('lastError');
+    if (le) break;
+    await fp.waitForTimeout(500);
+  }
+  check(
+    'mock 401: lastError set with friendly message',
+    le?.providerId === 'custom-openai' &&
+      le.message === 'API Key 无效或没有权限',
+    JSON.stringify(le),
+  );
+  await fp.close();
+  mockStatus = 200;
+
+  // popup screenshots: error state, unconfigured, light, dark
+  const popupShot2 = async (name, { dark = false } = {}) => {
+    const pop = await ctx.newPage();
+    await pop.addInitScript((url) => {
+      const orig = chrome.tabs.query.bind(chrome.tabs);
+      chrome.tabs.query = (q) =>
+        q?.active ? Promise.resolve([{ id: 1, url }]) : orig(q);
+    }, fixtureUrl);
+    await pop.goto(`chrome-extension://${extId}/popup.html`);
+    if (dark) await pop.emulateMedia({ colorScheme: 'dark' });
+    await pop.waitForTimeout(900);
+    await shot(pop, name);
+    await pop.close();
+  };
+  await popupShot2('m3-popup-error.png');
+
+  await setLocal({
+    'providerConfigs': { 'custom-openai': { apiKey: '' } },
+    'lastError': null,
+  });
+  await popupShot2('m3-popup-unconfigured.png');
+  await setLocal({ 'activeProvider': 'minimax-cn' });
+  await popupShot2('m3-popup.png');
+  await popupShot2('m3-popup-dark.png', { dark: true });
+
+  // in-page chunk-mode default screenshot (dev key, cloud)
+  const cp = await ctx.newPage();
+  await cp.goto(fixtureUrl);
+  await cp.waitForTimeout(2500);
+  await shot(cp, 'm3-chunk-default.png');
+  await cp.close();
+
+  // options screenshots
+  const optShot = async (hash, name) => {
+    const o = await ctx.newPage();
+    await o.goto(`chrome-extension://${extId}/options.html${hash}`);
+    await o.waitForTimeout(900);
+    await shot(o, name);
+    await o.close();
+  };
+  await optShot('#welcome', 'm3-options-welcome.png');
+
+  // models: select MiniMax（国内）card and run a real 测试连接 (dev key
+  // fallback — the API Key field stays empty on purpose)
+  {
+    const o = await ctx.newPage();
+    await o.goto(`chrome-extension://${extId}/options.html#models`);
+    await o.waitForTimeout(900);
+    await o.evaluate(() => {
+      [...document.querySelectorAll('.pcard')].find((c) =>
+        c.textContent.includes('MiniMax（国内）'),
+      )?.click();
+    });
+    await o.waitForTimeout(300);
+    await o.click('button:has-text("测试连接")');
+    await o.waitForFunction(
+      () => !!document.querySelector('.testres')?.textContent.includes('连接成功'),
+      { timeout: 45000 },
+    ).catch(() => console.log('testConnection timed out'));
+    await shot(o, 'm3-options-models.png');
+    await o.close();
+  }
+
+  // usage page with seeded data
+  await setLocal({
+    'usageLog': [
+      { ts: Date.now() - 3600e3, providerId: 'minimax-cn', model: 'MiniMax-M3', inputTokens: 210, outputTokens: 98, ms: 812, ok: true, paragraphs: 4, chars: 200 },
+      { ts: Date.now() - 1800e3, providerId: 'deepseek', model: 'deepseek-flash', inputTokens: 95, outputTokens: 40, ms: 430, ok: true, paragraphs: 2, chars: 80 },
+      { ts: Date.now() - 600e3, providerId: 'custom-openai', model: 'mock-model', inputTokens: 123, outputTokens: 45, ms: 12, ok: false, status: 401, error: 'API Key 无效或没有权限', paragraphs: 1, chars: 14 },
+    ],
+  });
+  await optShot('#usage', 'm3-options-usage.png');
+  await optShot('#help', 'm3-options-help.png');
+
+  // icon sizes side by side
+  {
+    const o = await ctx.newPage();
+    await o.goto(`chrome-extension://${extId}/options.html`);
+    await o.evaluate((extId) => {
+      document.body.innerHTML =
+        '<div style="display:flex;align-items:flex-end;gap:24px;padding:24px;background:#f8fafc">' +
+        [16, 48, 128]
+          .map(
+            (s) =>
+              `<div><img src="chrome-extension://${extId}/icon/${s}.png" width="${s}"><div style="font:12px sans-serif;color:#6b7280">${s}px</div></div>`,
+          )
+          .join('') +
+        '</div>';
+    }, extId);
+    await o.waitForTimeout(400);
+    await shot(o, 'm3-icons.png');
+    await o.close();
+  }
+}
+
 await page.close();
 await boot.close();
 await ctx.close();
 server.close();
+mockApi.close();
 console.log(`DONE (${failures} failures)`);
 process.exit(failures ? 1 : 0);

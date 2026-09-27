@@ -20,6 +20,7 @@ import {
 import { TtsPlayer, type TtsSynth, type UtteranceLike } from './tts';
 import {
   BG_THEME_COLORS,
+  colorUnit,
   getStyleSettings,
   readerFontSize,
   readerGap,
@@ -27,6 +28,7 @@ import {
   ttsRate,
   type StyleSettings,
 } from './settings';
+import { TIP_GAP } from '../ui/copy';
 
 const HAN_RE = /\p{Script=Han}/u;
 const MIN_HAN = 50;
@@ -53,12 +55,21 @@ interface ReaderCtx {
   pendingStart: number | null;
   ttsBtn: HTMLButtonElement;
   ttsMsg: HTMLSpanElement;
+  ttsPill: HTMLDivElement;
+  pillPlay: HTMLButtonElement;
+  pillRate: HTMLSpanElement;
   gapSeg: HTMLButtonElement[];
+  unitSeg: HTMLButtonElement[];
   fsLabel: HTMLSpanElement;
   wLabel: HTMLSpanElement;
-  rateSlider: HTMLInputElement;
+  popover: HTMLDivElement;
+  barEl: HTMLDivElement;
+  progFill: HTMLDivElement;
+  lastScrollTop: number;
   onKeydown: (e: KeyboardEvent) => void;
   onClick: (e: MouseEvent) => void;
+  onScroll: () => void;
+  onMouseMove: (e: MouseEvent) => void;
 }
 
 let reader: ReaderCtx | null = null;
@@ -95,12 +106,49 @@ function readerCss(s: StyleSettings): string {
       flex-direction:column;background:${bg};color:#1a1a1a;
       font-family:system-ui,sans-serif}
     .bar{position:sticky;top:0;display:flex;gap:8px;align-items:center;
-      flex-wrap:wrap;padding:8px 16px;background:${bg};
-      border-bottom:1px solid #e5e7eb;font-size:14px;z-index:1}
-    .bar button{font-size:14px;padding:4px 10px;border:1px solid #d1d5db;
-      border-radius:6px;background:#fff;cursor:pointer;min-height:30px}
+      padding:8px 16px;background:${bg};
+      border-bottom:1px solid #e5e7eb;font-size:14px;z-index:2;
+      transition:transform .18s ease}
+    .bar.hidden{transform:translateY(-100%)}
+    .bar .site{color:#6b7280;font-size:12.5px}
+    .bar .spacer{flex:1}
+    .bar button{font-size:14px;padding:4px 12px;border:1px solid #d1d5db;
+      border-radius:999px;background:#fff;cursor:pointer;min-height:32px;
+      display:inline-flex;align-items:center;gap:6px}
     .bar button.sel{background:#dbeafe;border-color:#3b82f6}
+    .bar button.primary{background:#1e40af;border-color:#1e40af;color:#fff}
     .bar input[type=range]{width:110px}
+    .prog{position:sticky;top:0;height:2px;background:transparent;z-index:2;
+      margin-top:-2px}
+    .prog .fill{height:100%;width:0%;background:#1e40af}
+    .pop{position:absolute;top:52px;right:16px;z-index:3;background:#fff;
+      border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 8px 28px
+      rgb(0 0 0 /.14);padding:12px;display:none;font-size:13.5px;
+      min-width:240px}
+    .pop.open{display:block}
+    .pop .row{display:flex;align-items:center;gap:8px;min-height:36px}
+    .pop .lbl{width:40px;color:#6b7280}
+    .pop button{border:1px solid #d1d5db;border-radius:8px;background:#fff;
+      color:#1f2937;cursor:pointer;min-height:32px;padding:0 10px;
+      font-size:13px}
+    .pop button:hover{border-color:#9ca3af}
+    .pop .seg{display:inline-flex;border:1px solid #d1d5db;
+      border-radius:8px;overflow:hidden}
+    .pop .seg button{border:none;border-radius:0;min-height:32px}
+    .pop .seg button.sel{background:#1e40af;color:#fff}
+    .pop .val{min-width:36px;text-align:center;font-variant-numeric:
+      tabular-nums}
+    .ttspill{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);
+      display:none;align-items:center;gap:8px;background:#111827;
+      color:#f9fafb;border-radius:999px;padding:8px 14px;z-index:3;
+      box-shadow:0 8px 24px rgb(0 0 0 /.3)}
+    .ttspill.on{display:flex}
+    .ttspill button{background:transparent;border:none;color:#f9fafb;
+      cursor:pointer;font-size:13px;display:inline-flex;align-items:center;
+      gap:4px;min-height:28px;padding:0 6px}
+    .ttspill .rate{min-width:44px;text-align:center;
+      font-variant-numeric:tabular-nums;font-size:12.5px}
+    .ttspill svg{width:14px;height:14px}
     .scroll{flex:1;overflow-y:auto;padding:24px 16px 40vh}
     .col{max-width:${s.readerWidth}em;margin:0 auto;
       font-size:${s.readerFontSize}px;
@@ -109,7 +157,8 @@ function readerCss(s: StyleSettings): string {
     .col h1{font-size:1.5em;margin:0 0 .2em}
     .byline{color:#6b7280;font-size:.8em;margin-bottom:1em}
     .col p{margin:.6em 0}
-    .col img{max-width:100%}
+    .col img{display:block;margin:1em auto;max-width:100%;height:auto;
+      border-radius:8px}
     .w.a{color:${a}} .w.b{color:${b}} .w.f{color:${FADE_LIGHT}}
     ::highlight(readhd-tts-sent){background-color:#FEF3C7}
     ::highlight(readhd-tts-word){background-color:#FDE68A}
@@ -248,10 +297,21 @@ function makeUtt(text: string): UtteranceLike {
   return new SpeechSynthesisUtterance(text) as unknown as UtteranceLike;
 }
 
+const SVG_PLAY =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg>';
+const SVG_PAUSE =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
+const SVG_STOP =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
 function updateTtsBtn(ctx: ReaderCtx): void {
   const st = ctx.player?.getState() ?? 'stopped';
-  ctx.ttsBtn.textContent =
-    st === 'playing' ? '⏸ 暂停' : st === 'paused' ? '▶ 继续' : '▶ 朗读';
+  const lbl =
+    st === 'playing' ? '暂停' : st === 'paused' ? '继续' : '朗读';
+  ctx.ttsBtn.innerHTML = `${st === 'playing' ? SVG_PAUSE : SVG_PLAY}${lbl}`;
+  ctx.pillPlay.innerHTML =
+    st === 'playing' ? `${SVG_PAUSE}暂停` : `${SVG_PLAY}继续`;
+  ctx.ttsPill.classList.toggle('on', st !== 'stopped');
 }
 
 function setupPlayer(ctx: ReaderCtx, s: StyleSettings): void {
@@ -344,7 +404,16 @@ async function openReader(): Promise<void> {
   }
   col.appendChild(content);
   scroller.appendChild(col);
-  wrap.append(bar, scroller);
+  const prog = document.createElement('div');
+  prog.className = 'prog';
+  const progFill = document.createElement('div');
+  progFill.className = 'fill';
+  prog.appendChild(progFill);
+  const popover = document.createElement('div');
+  popover.className = 'pop';
+  const pill = document.createElement('div');
+  pill.className = 'ttspill';
+  wrap.append(bar, prog, scroller);
   shadow.append(style, wrap);
 
   const ctx: ReaderCtx = {
@@ -360,12 +429,37 @@ async function openReader(): Promise<void> {
     pendingStart: null,
     ttsBtn: document.createElement('button'),
     ttsMsg: document.createElement('span'),
+    ttsPill: pill,
+    pillPlay: document.createElement('button'),
+    pillRate: document.createElement('span'),
     gapSeg: [],
+    unitSeg: [],
     fsLabel: document.createElement('span'),
     wLabel: document.createElement('span'),
-    rateSlider: document.createElement('input'),
+    popover,
+    barEl: bar,
+    progFill,
+    lastScrollTop: 0,
     onKeydown: (e) => {
-      if (e.key === 'Escape') closeReader();
+      if (e.key === 'Escape') {
+        if (popover.classList.contains('open')) {
+          popover.classList.remove('open');
+        } else {
+          closeReader();
+        }
+        return;
+      }
+      if (e.key === ' ') {
+        const t = e.target as HTMLElement | null;
+        if (t && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName)) return;
+        e.preventDefault();
+        const p = ctx.player;
+        if (!p) return;
+        const st = p.getState();
+        if (st === 'playing') p.pause();
+        else if (st === 'paused') p.resume();
+        else void p.play(startIndex(ctx));
+      }
     },
     onClick: (e) => {
       const r = document.caretRangeFromPoint(e.clientX, e.clientY);
@@ -380,6 +474,19 @@ async function openReader(): Promise<void> {
         ctx.pendingStart = idx;
       }
     },
+    onScroll: () => {
+      const el = ctx.scroller;
+      const max = el.scrollHeight - el.clientHeight;
+      ctx.progFill.style.width = `${max > 0 ? (el.scrollTop / max) * 100 : 0}%`;
+      const down = el.scrollTop > ctx.lastScrollTop + 4;
+      const up = el.scrollTop < ctx.lastScrollTop - 4;
+      ctx.lastScrollTop = el.scrollTop;
+      if (down && el.scrollTop > 60) bar.classList.add('hidden');
+      else if (up || el.scrollTop < 60) bar.classList.remove('hidden');
+    },
+    onMouseMove: (e) => {
+      if (e.clientY < 64) bar.classList.remove('hidden');
+    },
   };
 
   // --- toolbar ---
@@ -387,38 +494,23 @@ async function openReader(): Promise<void> {
     const b = document.createElement('button');
     b.textContent = label;
     b.addEventListener('click', fn);
-    bar.appendChild(b);
     return b;
   };
-  mkBtn('关闭 ×', () => closeReader());
-  ctx.fsLabel.textContent = `字号 ${s.readerFontSize}`;
-  mkBtn('A−', () => {
-    const v = Math.max(16, s.readerFontSize - 2);
-    void readerFontSize.setValue(v);
-  });
-  mkBtn('A+', () => {
-    const v = Math.min(32, s.readerFontSize + 2);
-    void readerFontSize.setValue(v);
-  });
-  bar.appendChild(ctx.fsLabel);
-  ctx.wLabel.textContent = `宽度 ${s.readerWidth}`;
-  mkBtn('窄', () => {
-    void readerWidth.setValue(Math.max(18, s.readerWidth - 2));
-  });
-  mkBtn('宽', () => {
-    void readerWidth.setValue(Math.min(40, s.readerWidth + 2));
-  });
-  bar.appendChild(ctx.wLabel);
-  for (const [mode, label] of [
-    ['none', '间隔:无'],
-    ['word', '间隔:词'],
-    ['chunk', '间隔:意群'],
-  ] as const) {
-    const b = mkBtn(label, () => void readerGap.setValue(mode));
-    if (s.readerGap === mode) b.classList.add('sel');
-    ctx.gapSeg.push(b);
-  }
-  ctx.ttsBtn.textContent = '▶ 朗读';
+  const exit = document.createElement('button');
+  exit.innerHTML =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>退出';
+  exit.addEventListener('click', () => closeReader());
+  bar.appendChild(exit);
+  const site = document.createElement('span');
+  site.className = 'site';
+  site.textContent = location.hostname;
+  bar.appendChild(site);
+  const spacer = document.createElement('span');
+  spacer.className = 'spacer';
+  bar.appendChild(spacer);
+
+  ctx.ttsBtn.className = 'primary';
+  ctx.ttsBtn.innerHTML = `${SVG_PLAY}朗读`;
   ctx.ttsBtn.addEventListener('click', () => {
     const p = ctx.player!;
     const st = p.getState();
@@ -427,25 +519,138 @@ async function openReader(): Promise<void> {
     else void p.play(startIndex(ctx));
   });
   bar.appendChild(ctx.ttsBtn);
-  mkBtn('■ 停止', () => ctx.player?.stop());
-  const rateLbl = document.createElement('span');
-  rateLbl.textContent = '语速';
-  ctx.rateSlider.type = 'range';
-  ctx.rateSlider.min = '0.5';
-  ctx.rateSlider.max = '1.5';
-  ctx.rateSlider.step = '0.05';
-  ctx.rateSlider.value = String(s.ttsRate);
-  ctx.rateSlider.addEventListener('change', () =>
-    void ttsRate.setValue(Number(ctx.rateSlider.value)),
-  );
+
+  const aa = document.createElement('button');
+  aa.textContent = 'Aa';
+  aa.setAttribute('aria-label', '排版设置');
+  aa.setAttribute('aria-expanded', 'false');
+  aa.addEventListener('click', () => {
+    const open = popover.classList.toggle('open');
+    aa.setAttribute('aria-expanded', String(open));
+  });
+  bar.appendChild(aa);
   ctx.ttsMsg.className = 'ttsmsg';
-  bar.append(rateLbl, ctx.rateSlider, ctx.ttsMsg);
+  bar.appendChild(ctx.ttsMsg);
+
+  // --- Aa popover ---
+  const popRow = (label: string, ...els: HTMLElement[]) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const l = document.createElement('span');
+    l.className = 'lbl';
+    l.textContent = label;
+    row.append(l, ...els);
+    popover.appendChild(row);
+    return row;
+  };
+  const mkSeg = (
+    modes: readonly [string, string][],
+    cur: string,
+    store: HTMLButtonElement[],
+    set: (m: string) => void,
+  ) => {
+    const seg = document.createElement('span');
+    seg.className = 'seg';
+    for (const [mode, label] of modes) {
+      const b = mkBtn(label, () => set(mode));
+      if (cur === mode) b.classList.add('sel');
+      seg.appendChild(b);
+      store.push(b);
+    }
+    return seg;
+  };
+  const stepBtn = (label: string, fn: () => void) => {
+    const b = mkBtn(label, fn);
+    b.style.minWidth = '30px';
+    return b;
+  };
+  ctx.fsLabel.className = 'val';
+  ctx.fsLabel.textContent = String(s.readerFontSize);
+  popRow(
+    '字号',
+    stepBtn('−', () =>
+      void readerFontSize.setValue(Math.max(16, s.readerFontSize - 2)),
+    ),
+    ctx.fsLabel,
+    stepBtn('+', () =>
+      void readerFontSize.setValue(Math.min(32, s.readerFontSize + 2)),
+    ),
+  );
+  ctx.wLabel.className = 'val';
+  ctx.wLabel.textContent = String(s.readerWidth);
+  popRow(
+    '宽度',
+    stepBtn('窄', () => void readerWidth.setValue(Math.max(18, s.readerWidth - 2))),
+    ctx.wLabel,
+    stepBtn('宽', () => void readerWidth.setValue(Math.min(40, s.readerWidth + 2))),
+  );
+  popRow(
+    '间隔',
+    mkSeg(
+      [
+        ['none', '无'],
+        ['word', '词'],
+        ['chunk', '意群'],
+      ],
+      s.readerGap,
+      ctx.gapSeg,
+      (m) => void readerGap.setValue(m as typeof s.readerGap),
+    ),
+    (() => {
+      const tip = document.createElement('span');
+      tip.className = 'site';
+      tip.title = TIP_GAP;
+      tip.textContent = 'ⓘ';
+      return tip;
+    })(),
+  );
+  popRow(
+    '标色',
+    mkSeg(
+      [
+        ['chunk', '意群'],
+        ['word', '词'],
+      ],
+      s.colorUnit,
+      ctx.unitSeg,
+      (m) => void colorUnit.setValue(m as typeof s.colorUnit),
+    ),
+  );
   // --- end toolbar ---
+
+  // --- TTS floating pill ---
+  ctx.pillPlay.innerHTML = `${SVG_PLAY}继续`;
+  ctx.pillPlay.addEventListener('click', () => {
+    const p = ctx.player!;
+    if (p.getState() === 'playing') p.pause();
+    else p.resume();
+  });
+  const pillStop = document.createElement('button');
+  pillStop.innerHTML = `${SVG_STOP}停止`;
+  pillStop.addEventListener('click', () => ctx.player?.stop());
+  const rateMinus = document.createElement('button');
+  rateMinus.textContent = '−';
+  rateMinus.setAttribute('aria-label', '语速减慢');
+  rateMinus.addEventListener('click', () => {
+    void ttsRate.setValue(Math.max(0.5, Math.round((s.ttsRate - 0.1) * 10) / 10));
+  });
+  ctx.pillRate.className = 'rate';
+  ctx.pillRate.textContent = `${s.ttsRate.toFixed(1)}×`;
+  const ratePlus = document.createElement('button');
+  ratePlus.textContent = '+';
+  ratePlus.setAttribute('aria-label', '语速加快');
+  ratePlus.addEventListener('click', () => {
+    void ttsRate.setValue(Math.min(1.5, Math.round((s.ttsRate + 0.1) * 10) / 10));
+  });
+  pill.append(ctx.pillPlay, pillStop, ctx.pillRate, rateMinus, ratePlus);
+  wrap.append(popover, pill);
 
   document.documentElement.appendChild(host);
   document.documentElement.style.overflow = 'hidden';
   document.addEventListener('keydown', ctx.onKeydown);
   scroller.addEventListener('click', ctx.onClick);
+  scroller.addEventListener('scroll', ctx.onScroll);
+  scroller.addEventListener('mousemove', ctx.onMouseMove);
   CSS.highlights.set('readhd-tts-sent', ctx.sentHl);
   CSS.highlights.set('readhd-tts-word', ctx.wordHl);
   onAfterOpen(); // keep the reading ruler above the reader
@@ -522,12 +727,16 @@ export function refreshReader(s: StyleSettings): void {
   const ctx = reader;
   if (!ctx) return;
   ctx.shadow.querySelector('style')!.textContent = readerCss(s);
-  ctx.fsLabel.textContent = `字号 ${s.readerFontSize}`;
-  ctx.wLabel.textContent = `宽度 ${s.readerWidth}`;
+  ctx.fsLabel.textContent = String(s.readerFontSize);
+  ctx.wLabel.textContent = String(s.readerWidth);
   const modes = ['none', 'word', 'chunk'] as const;
   ctx.gapSeg.forEach((b, i) =>
     b.classList.toggle('sel', modes[i] === s.readerGap),
   );
-  ctx.rateSlider.value = String(s.ttsRate);
+  const units = ['chunk', 'word'] as const;
+  ctx.unitSeg.forEach((b, i) =>
+    b.classList.toggle('sel', units[i] === s.colorUnit),
+  );
+  ctx.pillRate.textContent = `${s.ttsRate.toFixed(1)}×`;
   renderAll(ctx, s);
 }

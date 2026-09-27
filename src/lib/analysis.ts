@@ -66,21 +66,29 @@ export function parseAnalysisItem(
   };
 }
 
+/** Parse per-input analyses from the raw model text output. */
+export function parseAnalysisText(
+  inputs: string[],
+  text: string,
+): (Analysis | null)[] {
+  const allNull = inputs.map(() => null);
+  const arr = extractJsonArray(text);
+  if (!arr || arr.length !== inputs.length) return allNull;
+  return inputs.map((input, i) => parseAnalysisItem(input, arr[i]));
+}
+
 /** Parse a full Anthropic-style response into per-input analyses. */
 export function parseAnalyzeResponse(
   inputs: string[],
   body: unknown,
 ): (Analysis | null)[] {
-  const allNull = inputs.map(() => null);
   const content = (body as { content?: unknown })?.content;
-  if (!Array.isArray(content)) return allNull;
+  if (!Array.isArray(content)) return inputs.map(() => null);
   const text = content
     .filter((b) => (b as { type?: string })?.type === 'text')
     .map((b) => (b as { text?: string }).text ?? '')
     .join('');
-  const arr = extractJsonArray(text);
-  if (!arr || arr.length !== inputs.length) return allNull;
-  return inputs.map((input, i) => parseAnalysisItem(input, arr[i]));
+  return parseAnalysisText(inputs, text);
 }
 
 /** Local fallback: Intl.Segmenter words, no POS, no chunks. */

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect x="0" y="0" width="128" height="128" rx="26" fill="#1e40af"/>
+  <!-- three text lines split into alternating white / light-blue segments -->
+  <g>
+    <rect x="26" y="34" width="34" height="12" rx="6" fill="#ffffff"/>
+    <rect x="66" y="34" width="36" height="12" rx="6" fill="#93c5fd"/>
+    <rect x="26" y="58" width="30" height="12" rx="6" fill="#93c5fd"/>
+    <rect x="62" y="58" width="40" height="12" rx="6" fill="#ffffff"/>
+    <rect x="26" y="82" width="38" height="12" rx="6" fill="#ffffff"/>
+    <rect x="70" y="82" width="32" height="12" rx="6" fill="#93c5fd"/>
+  </g>
+</svg>

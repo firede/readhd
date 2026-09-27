@@ -1,0 +1,40 @@
+/* readhd design tokens — shared by popup and options pages. */
+
+:root {
+  --brand: #1e40af;
+  --brand-weak: #e0e7ff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --bg: #ffffff;
+  --surface: #f8fafc;
+  --border: #e5e7eb;
+  --danger: #b91c1c;
+  --danger-weak: #fee2e2;
+  --warn: #b45309;
+  --warn-weak: #fef3c7;
+  --ok: #15803d;
+  --ok-weak: #dcfce7;
+  --radius-card: 12px;
+  --radius-ctl: 8px;
+  --font:
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui,
+    sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand: #93c5fd;
+    --brand-weak: #1e3a8a;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --bg: #111827;
+    --surface: #1f2937;
+    --border: #374151;
+    --danger: #fca5a5;
+    --danger-weak: #450a0a;
+    --warn: #fcd34d;
+    --warn-weak: #451a03;
+    --ok: #86efac;
+    --ok-weak: #052e16;
+  }
+}

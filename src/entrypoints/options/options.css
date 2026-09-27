@@ -1,0 +1,251 @@
+@import '../../ui/theme.css';
+@import '../../ui/ui.css';
+
+body {
+  min-height: 100vh;
+}
+.opt {
+  display: flex;
+  min-height: 100vh;
+}
+.side {
+  width: 168px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 20px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  box-sizing: border-box;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  padding: 4px 10px 16px;
+}
+.navbtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-ctl);
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+.navbtn:hover {
+  background: var(--bg);
+}
+.navbtn.sel {
+  background: var(--brand-weak);
+  color: var(--brand);
+  font-weight: 600;
+}
+.main {
+  flex: 1;
+  max-width: 760px;
+  padding: 28px 32px 64px;
+}
+.main h2 {
+  margin: 0 0 16px;
+  font-size: 19px;
+}
+.main h3 {
+  font-size: 15px;
+}
+
+/* provider cards */
+.pgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.pcard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+.pcard:hover {
+  border-color: var(--brand);
+}
+.pcard.sel {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+.pname {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pcard .cur {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ok);
+  background: var(--ok-weak);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.pnote {
+  font-size: 12px;
+  color: var(--muted);
+}
+.pform {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 16px;
+}
+.ffield {
+  margin-bottom: 12px;
+}
+.ffield > label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ffield input,
+.ffield select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--bg);
+  color: var(--text);
+}
+.keyrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.keyrow input {
+  flex: 1;
+}
+.rh-chip.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+  color: var(--text);
+}
+.btnrow {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.testres {
+  margin-top: 12px;
+  word-break: break-all;
+}
+
+/* usage */
+.statgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 14px 0;
+}
+.stat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 12px;
+  background: var(--surface);
+}
+.stat .n {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.stat .l {
+  font-size: 12px;
+  color: var(--muted);
+}
+.utable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 8px 0 14px;
+}
+.utable th,
+.utable td {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.utable th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+.okc {
+  color: var(--ok);
+}
+.badc {
+  color: var(--danger);
+}
+.uh3 {
+  margin-top: 20px;
+}
+
+/* help */
+.help-item {
+  margin-bottom: 18px;
+}
+.help-item h3 {
+  margin: 0 0 6px;
+}
+.help-item p {
+  margin: 6px 0;
+  line-height: 1.8;
+  color: var(--text);
+}
+.keys {
+  border-collapse: collapse;
+}
+.keys td {
+  padding: 6px 14px 6px 0;
+}
+kbd {
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-family: var(--font);
+  font-size: 12px;
+  background: var(--surface);
+}
+
+/* welcome */
+.welcome {
+  max-width: 480px;
+  margin-top: 8px;
+}
+.welcome ol {
+  line-height: 2;
+}
+.welcome-btns {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}

@@ -1,159 +1,186 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { apiBase, apiKey, model, ttsRate, ttsVoice } from '../../lib/settings';
-import { analyzeCloudCached } from '../../lib/analyzer';
+import { browser } from 'wxt/browser';
+import { ModelsSection } from './models';
+import { UsageSection } from './usage';
+import { TtsSection } from './tts';
+import {
+  ABOUT_TEXT,
+  HELP_READER,
+  HELP_TTS,
+  TIP_CHUNK,
+  TIP_FADE,
+  TIP_GAP,
+  TIP_RULER,
+  TIP_WORD,
+} from '../../ui/copy';
+import {
+  IconBook,
+  IconChart,
+  IconHelp,
+  IconPlay,
+  IconSettings,
+} from '../../ui/icons';
+import './options.css';
 
-const TEST_TEXT = '小明在花盆里种下三颗豆子。';
-const TTS_SAMPLE = '小明在花盆里种下了三颗豆子。';
+type Page = 'welcome' | 'models' | 'usage' | 'tts' | 'help' | 'about';
 
-function zhVoices(): SpeechSynthesisVoice[] {
-  return speechSynthesis
-    .getVoices()
-    .filter((v) => v.lang.replace('_', '-').toLowerCase().startsWith('zh'));
+const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
+  { id: 'models', label: '模型服务', icon: <IconSettings /> },
+  { id: 'usage', label: '用量记录', icon: <IconChart /> },
+  { id: 'tts', label: '朗读', icon: <IconPlay /> },
+  { id: 'help', label: '帮助', icon: <IconHelp /> },
+  { id: 'about', label: '关于', icon: <IconBook /> },
+];
+
+function currentPage(): Page {
+  const h = location.hash.replace('#', '') as Page;
+  return NAV.some((n) => n.id === h) || h === 'welcome' ? h : 'models';
+}
+
+function Help() {
+  const items: [string, string][] = [
+    ['“词”和“意群”有什么区别？', `${TIP_WORD}\n\n${TIP_CHUNK}`],
+    ['阅读模式', HELP_READER],
+    ['词间空隙', TIP_GAP],
+    ['淡化虚词', TIP_FADE],
+    ['阅读尺', TIP_RULER],
+    ['朗读', HELP_TTS],
+  ];
+  return (
+    <div>
+      <h2>帮助</h2>
+      {items.map(([t, body], i) => (
+        <section key={t} id={i === 0 ? 'help-units' : undefined} className="help-item">
+          <h3>{t}</h3>
+          {body.split('\n\n').map((p, i) => (
+            <p key={i}>{p}</p>
+          ))}
+        </section>
+      ))}
+      <section className="help-item">
+        <h3>快捷键</h3>
+        <table className="keys">
+          <tbody>
+            <tr>
+              <td>
+                <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>
+              </td>
+              <td>打开 / 退出阅读模式</td>
+            </tr>
+            <tr>
+              <td>
+                <kbd>Space</kbd>
+              </td>
+              <td>阅读模式内：朗读 / 暂停</td>
+            </tr>
+            <tr>
+              <td>
+                <kbd>Esc</kbd>
+              </td>
+              <td>阅读模式内：先关闭设置弹层，再退出阅读模式</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+function About() {
+  return (
+    <div>
+      <h2>关于</h2>
+      <p className="rh-muted">readhd v{browser.runtime.getManifest().version}</p>
+      <p style={{ lineHeight: 1.8 }}>{ABOUT_TEXT}</p>
+    </div>
+  );
+}
+
+function Welcome({ go }: { go: (p: Page) => void }) {
+  return (
+    <div className="welcome rh-card">
+      <h2>欢迎使用 readhd</h2>
+      <p>三步上手：</p>
+      <ol>
+        <li>
+          <a
+            href="#models"
+            onClick={(e) => {
+              e.preventDefault();
+              go('models');
+            }}
+          >
+            选择模型服务
+          </a>
+          （可跳过）
+        </li>
+        <li>
+          <a
+            href="#help"
+            onClick={(e) => {
+              e.preventDefault();
+              go('help');
+              requestAnimationFrame(() =>
+                document.getElementById('help-units')?.scrollIntoView(),
+              );
+            }}
+          >
+            了解“词”和“意群”
+          </a>
+        </li>
+        <li className="rh-muted">打开任意中文网页试试</li>
+      </ol>
+      <div className="welcome-btns">
+        <button className="rh-btn primary" onClick={() => go('models')}>
+          设置模型服务
+        </button>
+        <button className="rh-btn ghost" onClick={() => go('models')}>
+          稍后再说
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function Options() {
-  const [key, setKey] = useState('');
-  const [base, setBase] = useState('');
-  const [mdl, setMdl] = useState('');
-  const [result, setResult] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [voice, setVoice] = useState('');
-  const [rate, setRate] = useState(0.9);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-
+  const [page, setPage] = useState<Page>(currentPage);
   useEffect(() => {
-    void (async () => {
-      setKey(await apiKey.getValue());
-      setBase(await apiBase.getValue());
-      setMdl(await model.getValue());
-      setVoice(await ttsVoice.getValue());
-      setRate(await ttsRate.getValue());
-    })();
-    const load = () => setVoices(zhVoices());
-    load();
-    speechSynthesis.addEventListener('voiceschanged', load);
-    return () => speechSynthesis.removeEventListener('voiceschanged', load);
+    const onHash = () => setPage(currentPage());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
-
-  function preview() {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(TTS_SAMPLE);
-    u.lang = 'zh-CN';
-    u.rate = rate;
-    const v = voices.find((x) => x.voiceURI === voice);
-    if (v) u.voice = v;
-    speechSynthesis.speak(u);
-  }
-
-  async function test() {
-    setTesting(true);
-    setResult('测试中…');
-    try {
-      const analysis = await analyzeCloudCached(TEST_TEXT);
-      if (analysis) {
-        // group words by chunk: 小明/n 今天/n | 在/p 花盆/n 里/n | …
-        const byChunk = new Map<number, string[]>();
-        let cur = -1;
-        for (const w of analysis.words) {
-          const ci = w.chunk ?? ++cur;
-          const list = byChunk.get(ci) ?? [];
-          list.push(`${w.text}/${w.pos ?? '-'}`);
-          byChunk.set(ci, list);
-        }
-        setResult(`成功：${[...byChunk.values()].map((ws) => ws.join(' ')).join(' | ')}`);
-      } else {
-        setResult('失败：云端未返回有效分词（请检查 API Key / 接口地址）');
-      }
-    } catch (e) {
-      setResult(`失败：${String(e)}`);
-    } finally {
-      setTesting(false);
-    }
-  }
+  const go = (p: Page) => {
+    location.hash = p;
+    setPage(p);
+  };
 
   return (
-    <div>
-      <h1>readhd 设置</h1>
-      <div className="field">
-        <label htmlFor="apiKey">API Key</label>
-        <input
-          id="apiKey"
-          type="password"
-          value={key}
-          placeholder="未设置时使用本地分词"
-          onChange={(e) => {
-            setKey(e.target.value);
-            void apiKey.setValue(e.target.value);
-          }}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="apiBase">接口地址</label>
-        <input
-          id="apiBase"
-          value={base}
-          onChange={(e) => {
-            setBase(e.target.value);
-            void apiBase.setValue(e.target.value);
-          }}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="model">模型</label>
-        <input
-          id="model"
-          value={mdl}
-          onChange={(e) => {
-            setMdl(e.target.value);
-            void model.setValue(e.target.value);
-          }}
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="voice">朗读语音</label>
-        <select
-          id="voice"
-          value={voice}
-          onChange={(e) => {
-            setVoice(e.target.value);
-            void ttsVoice.setValue(e.target.value);
-          }}
-        >
-          <option value="">自动</option>
-          {voices.map((v) => (
-            <option key={v.voiceURI} value={v.voiceURI}>
-              {v.name}（{v.lang}）
-            </option>
-          ))}
-        </select>
-        <button onClick={preview}>试听</button>
-      </div>
-      <div className="field">
-        <label htmlFor="rate">语速 {rate.toFixed(2)}</label>
-        <input
-          id="rate"
-          type="range"
-          min="0.5"
-          max="1.5"
-          step="0.05"
-          value={rate}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            setRate(v);
-            void ttsRate.setValue(v);
-          }}
-        />
-      </div>
-      <button disabled={testing} onClick={() => void test()}>
-        {testing ? '测试中…' : '测试连接'}
-      </button>
-      <div
-        id="result"
-        style={{ display: result ? 'block' : 'none' }}
-      >
-        {result}
-      </div>
+    <div className="opt">
+      <aside className="side">
+        <div className="brand">
+          <img src="/icon/32.png" alt="" width={24} height={24} />
+          readhd
+        </div>
+        {NAV.map((n) => (
+          <button
+            key={n.id}
+            className={`navbtn ${page === n.id ? 'sel' : ''}`}
+            onClick={() => go(n.id)}
+          >
+            {n.icon}
+            {n.label}
+          </button>
+        ))}
+      </aside>
+      <main className="main">
+        {page === 'welcome' && <Welcome go={go} />}
+        {page === 'models' && <ModelsSection />}
+        {page === 'usage' && <UsageSection />}
+        {page === 'tts' && <TtsSection />}
+        {page === 'help' && <Help />}
+        {page === 'about' && <About />}
+      </main>
     </div>
   );
 }

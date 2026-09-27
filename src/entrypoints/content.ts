@@ -1,3 +1,4 @@
+import { browser } from 'wxt/browser';
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import {
   collectParagraphs,
@@ -374,6 +375,16 @@ export default defineContentScript({
         }
         dbgEl!.textContent = JSON.stringify(data);
       };
+      // local storage (API keys, usage) must be unreadable here.
+      void browser.storage.local
+        .get('activeProvider')
+        .then((v) => {
+          dbgEl!.dataset.localRead = `ok:${JSON.stringify(v)}`;
+        })
+        .catch((e: unknown) => {
+          dbgEl!.dataset.localRead =
+            `err:${e instanceof Error ? e.message : String(e)}`;
+        });
     }
     void reload();
     for (const item of [

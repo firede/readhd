@@ -51,6 +51,12 @@ export function lightPair(preset: ColorPreset): [string, string] {
   return PAIRS.light[preset];
 }
 
+export function darkPair(preset: ColorPreset): [string, string] {
+  return PAIRS.dark[preset];
+}
+
+export const FADE_DARK = FADE_COLORS.dark;
+
 /** Colors for ::highlight rules, per theme/preset. */
 export function highlightCss(preset: ColorPreset): string {
   const [la, lb] = PAIRS.light[preset];

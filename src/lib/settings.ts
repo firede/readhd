@@ -42,7 +42,7 @@ export const bgTheme = storage.defineItem<BgTheme>('sync:bgTheme', {
   fallback: 'none',
 });
 export const colorUnit = storage.defineItem<ColorUnit>('sync:colorUnit', {
-  fallback: 'word',
+  fallback: 'chunk',
 });
 export const fadeFunctionWords = storage.defineItem<boolean>(
   'sync:fadeFunctionWords',
@@ -71,16 +71,20 @@ export const ttsVoice = storage.defineItem<string>('sync:ttsVoice', {
   fallback: '',
 });
 
-// local items
-export const apiKey = storage.defineItem<string>('local:apiKey', {
-  fallback: '',
-});
-export const apiBase = storage.defineItem<string>('local:apiBase', {
-  fallback: 'https://api.minimax.cn/anthropic',
-});
-export const model = storage.defineItem<string>('local:model', {
-  fallback: 'MiniMax-M3',
-});
+// local items (TRUSTED_CONTEXTS only — background and extension pages)
+export const usageLog = storage.defineItem<import('./usage').UsageEntry[]>(
+  'local:usageLog',
+  { fallback: [] },
+);
+export const usageDaily = storage.defineItem<import('./usage').UsageDaily>(
+  'local:usageDaily',
+  { fallback: {} },
+);
+export const lastError = storage.defineItem<{
+  ts: number;
+  providerId: string;
+  message: string;
+} | null>('local:lastError', { fallback: null });
 export interface StyleSettings {
   enabled: boolean;
   disabledHosts: string[];
