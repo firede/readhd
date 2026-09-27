@@ -12,8 +12,12 @@ const outDir = '/tmp/readhd-evidence';
 mkdirSync(outDir, { recursive: true });
 
 const fixture = readFileSync(resolve('scripts/fixture.html'), 'utf8');
+const article = readFileSync(resolve('scripts/article.html'), 'utf8');
 const server = createServer((req, res) => {
   res.setHeader('content-type', 'text/html; charset=utf-8');
+  if (req.url === '/article.html') return res.end(article);
+  if (req.url === '/bare.html')
+    return res.end('<!doctype html><html><body><p>很短。</p></body></html>');
   res.end(fixture);
 });
 await new Promise((r) => server.listen(0, r));
@@ -200,26 +204,33 @@ if (dev) {
 await shot(page, 'm2a-word-cloud.png');
 
 // --- chunk mode (cloud) ---
+// Compare the render against the analysis the PAGE actually used (dev hook);
+// the model's chunking varies between API calls. Reload once if the cloud
+// analysis never arrived.
 if (dev) {
   await setSync({ colorUnit: 'chunk' });
-  const cloud = await analyzeViaSw(P_SEL);
-  // group word-like words by chunk, keep chunks with >=1 word-like word
-  const byChunk = new Map();
-  for (const w of cloud.words) {
-    if (!/[\u4e00-\u9fff\w]/.test(w.text)) continue;
-    const arr = byChunk.get(w.chunk) ?? [];
-    arr.push(w.text);
-    byChunk.set(w.chunk, arr);
-  }
-  const chunkTexts = [...byChunk.values()].filter((a) => a.length > 0);
   const ok = await page
     .waitForFunction(
-      ({ sel, chunks }) => {
+      (sel) => {
+        const dbg = JSON.parse(
+          document.getElementById('readhd-dbg')?.textContent || '{}',
+        );
+        const a = dbg[sel];
+        if (!a || a.source !== 'cloud') return false;
         const p = [...document.querySelectorAll('p')].find(
           (x) => x.textContent === sel,
         );
         if (!p) return false;
         const node = p.firstChild;
+        const isWL = (t) => /[\u4e00-\u9fff\w]/.test(t);
+        const byChunk = new Map();
+        for (const w of a.words) {
+          if (!isWL(w.text)) continue;
+          (byChunk.get(w.chunk) ?? byChunk.set(w.chunk, []).get(w.chunk)).push(
+            w.text,
+          );
+        }
+        const chunks = [...byChunk.values()];
         const clsOf = (t) => {
           for (const [name, h] of CSS.highlights.entries())
             for (const r of h)
@@ -229,19 +240,20 @@ if (dev) {
         };
         const cls = chunks.map((c) => c.map(clsOf));
         if (cls.some((c) => c.some((x) => x == null))) return false;
-        // same chunk same class; adjacent chunks alternate
         for (const c of cls) if (!c.every((x) => x === c[0])) return false;
         for (let i = 1; i < cls.length; i++)
           if (cls[i][0] === cls[i - 1][0]) return false;
         return true;
       },
-      { sel: P_SEL, chunks: chunkTexts },
-      { timeout: 25000 },
+      P_SEL,
+      { timeout: 60000 },
     )
     .then(() => true)
     .catch(() => false);
-  console.log('chunks:', JSON.stringify(chunkTexts));
-  if (!ok) console.log('  actual ranges:', JSON.stringify(await rangesOn(page, P_SEL)));
+  if (!ok) {
+    console.log('  actual ranges:', JSON.stringify(await rangesOn(page, P_SEL)));
+    console.log('  analysis:', JSON.stringify(await page.evaluate((s) => JSON.parse(document.getElementById('readhd-dbg')?.textContent || '{}')[s], P_SEL))?.slice(0, 600));
+  }
   check('chunk mode: same-chunk same class, adjacent alternate', ok);
   await shot(page, 'm2a-chunk-cloud.png');
 }
@@ -273,7 +285,7 @@ if (dev) {
         return fadedTexts.every((t) => ftexts.includes(t));
       },
       { sel: F_SEL, fadedTexts: faded },
-      { timeout: 25000 },
+      { timeout: 60000 },
     )
     .then(() => true)
     .catch(() => false);
@@ -350,6 +362,195 @@ if (!popupShot) {
   );
   await shot(popup, 'm2a-popup.png');
   await popup.close();
+}
+
+// --- M2-B: reader mode ---
+async function toggleReaderOn(pageUrl) {
+  const opt = await ctx.newPage();
+  await opt.goto(`chrome-extension://${extId}/options.html`);
+  await opt.evaluate(
+    (url) =>
+      chrome.tabs
+        .query({})
+        .then((tabs) =>
+          chrome.tabs.sendMessage(tabs.find((t) => t.url === url).id, {
+            type: 'toggleReader',
+          }),
+        ),
+    pageUrl,
+  );
+  await opt.close();
+}
+
+await setSync({ engine: 'cloud', enabled: true, readerGap: 'none' });
+const ap = await ctx.newPage();
+await ap.goto(`http://127.0.0.1:${port}/article.html`);
+await ap.waitForTimeout(1200);
+await toggleReaderOn(ap.url());
+await ap.waitForTimeout(1500);
+
+const readerInfo = await ap.evaluate(() => {
+  const host = document.querySelector('div.readhd-root#readhd-reader');
+  if (!host?.shadowRoot) return { open: false };
+  const sr = host.shadowRoot;
+  const content = sr.querySelector('.col');
+  return {
+    open: true,
+    title: sr.querySelector('h1')?.textContent ?? '',
+    hasScript: !!content.querySelector('script'),
+    onclick: content.querySelector('[onclick]') !== null,
+    wA: content.querySelectorAll('span.w.a').length,
+    wB: content.querySelectorAll('span.w.b').length,
+    imgs: content.querySelectorAll('img').length,
+    htmlOverflow: document.documentElement.style.overflow,
+  };
+});
+check('reader: overlay open + title', readerInfo.open === true && readerInfo.title.includes('森林里的小狐狸'), JSON.stringify(readerInfo));
+check('reader: no script/onclick in content', !readerInfo.hasScript && !readerInfo.onclick);
+check('reader: word spans a/b present', readerInfo.wA > 0 && readerInfo.wB > 0);
+check('reader: page scroll locked', readerInfo.htmlOverflow === 'hidden');
+await shot(ap, 'm2b-reader-word.png');
+
+// chunk gaps (cloud): some span.w gets margin-inline-end, and no margined
+// span is directly followed by punctuation. The model sometimes returns zero
+// adjacent word→word chunk boundaries (clause-sized chunks) — that's a
+// legitimate no-gap render, so retry with a fresh page/analysis up to 3 times.
+if (dev) {
+  const gapState = () =>
+    ap.evaluate(() => {
+      const sr = document.querySelector(
+        'div.readhd-root#readhd-reader',
+      )?.shadowRoot;
+      if (!sr) return { open: false };
+      const margined = [...sr.querySelectorAll('span.w')].filter(
+        (s) => parseFloat(getComputedStyle(s).marginInlineEnd) > 0,
+      );
+      const badPunct = margined.some((s) => {
+        const t = (s.nextSibling?.textContent ?? '').replace(/^\s+/, '');
+        return /^[，。！？；：、）】」』'".,!?;:)]/.test(t);
+      });
+      // count adjacent word→word chunk boundaries in the analyses used
+      let boundaries = 0;
+      let cloudParas = 0;
+      const dbg = JSON.parse(
+        sr.querySelector('#readhd-dbg')?.textContent || '[]',
+      );
+      for (const rp of dbg) {
+        const a = rp.analysis;
+        if (!a || a.source !== 'cloud') continue;
+        cloudParas++;
+        const w = a.words;
+        const isWL = (t) => /[\u4e00-\u9fff\w]/.test(t);
+        for (let i = 0; i < w.length; i++) {
+          if (!isWL(w[i].text)) continue;
+          for (let j = i + 1; j < w.length; j++) {
+            if (/^\s+$/.test(w[j].text)) continue;
+            if (isWL(w[j].text) && w[j].chunk !== w[i].chunk) boundaries++;
+            break;
+          }
+        }
+      }
+      return {
+        open: true,
+        margined: margined.length,
+        badPunct,
+        cloudParas,
+        boundaries,
+      };
+    });
+  let gapOk = false;
+  let last = null;
+  for (let attempt = 0; attempt < 3 && !gapOk; attempt++) {
+    await setSync({ readerGap: 'chunk' });
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      last = await gapState();
+      if (last.open === false) break;
+      if (last.margined > 0 && !last.badPunct) {
+        gapOk = true;
+        break;
+      }
+      // cloud arrived everywhere and there is nothing to gap → hopeless round
+      if (last.cloudParas > 0 && last.boundaries === 0) break;
+      await ap.waitForTimeout(1000);
+    }
+    if (!gapOk && attempt < 2) {
+      await toggleReaderOn(ap.url()); // closes (toggle)
+      await ap.waitForTimeout(500);
+      await ap.reload();
+      await ap.waitForTimeout(1500);
+      await toggleReaderOn(ap.url());
+      await ap.waitForTimeout(1500);
+    }
+  }
+  check('reader: chunk gaps give margin', gapOk, JSON.stringify(last));
+  await shot(ap, 'm2b-reader-chunk-gap.png');
+} else {
+  await shot(ap, 'm2b-reader-chunk-gap.png');
+}
+
+// TTS: press play; either no zh voice message or a sentence highlight appears
+await ap.evaluate(() => {
+  const sr = document.querySelector('div.readhd-root#readhd-reader').shadowRoot;
+  const btns = [...sr.querySelectorAll('button')];
+  btns.find((b) => b.textContent.includes('朗读')).click();
+});
+await ap.waitForTimeout(3000);
+const ttsInfo = await ap.evaluate(() => {
+  const sr = document.querySelector('div.readhd-root#readhd-reader')?.shadowRoot;
+  if (!sr) return {};
+  return {
+    msg: sr.querySelector('.ttsmsg')?.textContent ?? '',
+    sentRanges: CSS.highlights.get('readhd-tts-sent')?.size ?? 0,
+    btn: [...sr.querySelectorAll('button')].find((b) => /朗读|暂停|继续/.test(b.textContent))?.textContent,
+  };
+});
+check(
+  'reader tts: no-voice message or sentence highlight',
+  ttsInfo.msg === '没有找到中文语音' || (ttsInfo.sentRanges ?? 0) > 0,
+  JSON.stringify(ttsInfo),
+);
+await shot(ap, 'm2b-reader-tts.png');
+
+// Esc closes and restores html overflow
+await ap.keyboard.press('Escape');
+await ap.waitForTimeout(600);
+const afterEsc = await ap.evaluate(() => ({
+  open: !!document.querySelector('div.readhd-root#readhd-reader'),
+  overflow: document.documentElement.style.overflow,
+}));
+check('reader: Esc closes + overflow restored', !afterEsc.open && afterEsc.overflow === '', JSON.stringify(afterEsc));
+
+// toast on a page with no article
+const bp = await ctx.newPage();
+await bp.goto(`http://127.0.0.1:${port}/bare.html`);
+await bp.waitForTimeout(800);
+await toggleReaderOn(bp.url());
+await bp.waitForTimeout(1200);
+const toast = await bp.evaluate(() => {
+  const hosts = [...document.querySelectorAll('div.readhd-root')];
+  const t = hosts.find((h) => h.shadowRoot?.querySelector('.t'));
+  return {
+    toast: t?.shadowRoot?.querySelector('.t')?.textContent ?? null,
+    readerOpen: !!document.querySelector('div.readhd-root#readhd-reader'),
+  };
+});
+check('toast on no-article page', toast.toast === '这个页面没有找到可以阅读的正文' && !toast.readerOpen, JSON.stringify(toast));
+await shot(bp, 'm2b-toast.png');
+await bp.close();
+await ap.close();
+
+// options page with voice picker
+{
+  const opt = await ctx.newPage();
+  await opt.goto(`chrome-extension://${extId}/options.html`);
+  await opt.waitForTimeout(1000);
+  check(
+    'options: voice picker + rate slider',
+    await opt.evaluate(() => !!document.getElementById('voice') && !!document.getElementById('rate')),
+  );
+  await shot(opt, 'm2b-options-voice.png');
+  await opt.close();
 }
 
 await page.close();

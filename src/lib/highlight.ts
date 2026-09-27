@@ -44,6 +44,13 @@ export function ensureHighlightsRegistered(): void {
 
 const FADE_COLORS = { light: '#6b7280', dark: '#9ca3af' } as const;
 
+export const FADE_LIGHT = FADE_COLORS.light;
+
+/** Light-theme A/B colors for a preset (used by the reader's span colors). */
+export function lightPair(preset: ColorPreset): [string, string] {
+  return PAIRS.light[preset];
+}
+
 /** Colors for ::highlight rules, per theme/preset. */
 export function highlightCss(preset: ColorPreset): string {
   const [la, lb] = PAIRS.light[preset];

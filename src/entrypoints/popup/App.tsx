@@ -345,6 +345,28 @@ export default function App() {
       <div className="btn-row">
         <button
           className="big"
+          onClick={() => {
+            void (async () => {
+              const tab = (
+                await browser.tabs.query({ active: true, currentWindow: true })
+              )[0];
+              if (tab?.id != null) {
+                try {
+                  await browser.tabs.sendMessage(tab.id, {
+                    type: 'toggleReader',
+                  });
+                } catch {
+                  // content script not reachable on this page
+                }
+              }
+              window.close();
+            })();
+          }}
+        >
+          阅读模式
+        </button>
+        <button
+          className="big"
           onClick={() => void browser.runtime.openOptionsPage()}
         >
           设置

@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { apiBase, apiKey, model } from '../../lib/settings';
+import { apiBase, apiKey, model, ttsRate, ttsVoice } from '../../lib/settings';
 import { analyzeCloudCached } from '../../lib/analyzer';
 
 const TEST_TEXT = '小明在花盆里种下三颗豆子。';
+const TTS_SAMPLE = '小明在花盆里种下了三颗豆子。';
+
+function zhVoices(): SpeechSynthesisVoice[] {
+  return speechSynthesis
+    .getVoices()
+    .filter((v) => v.lang.replace('_', '-').toLowerCase().startsWith('zh'));
+}
 
 function Options() {
   const [key, setKey] = useState('');
@@ -11,14 +18,33 @@ function Options() {
   const [mdl, setMdl] = useState('');
   const [result, setResult] = useState('');
   const [testing, setTesting] = useState(false);
+  const [voice, setVoice] = useState('');
+  const [rate, setRate] = useState(0.9);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   useEffect(() => {
     void (async () => {
       setKey(await apiKey.getValue());
       setBase(await apiBase.getValue());
       setMdl(await model.getValue());
+      setVoice(await ttsVoice.getValue());
+      setRate(await ttsRate.getValue());
     })();
+    const load = () => setVoices(zhVoices());
+    load();
+    speechSynthesis.addEventListener('voiceschanged', load);
+    return () => speechSynthesis.removeEventListener('voiceschanged', load);
   }, []);
+
+  function preview() {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(TTS_SAMPLE);
+    u.lang = 'zh-CN';
+    u.rate = rate;
+    const v = voices.find((x) => x.voiceURI === voice);
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  }
 
   async function test() {
     setTesting(true);
@@ -81,6 +107,41 @@ function Options() {
           onChange={(e) => {
             setMdl(e.target.value);
             void model.setValue(e.target.value);
+          }}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="voice">朗读语音</label>
+        <select
+          id="voice"
+          value={voice}
+          onChange={(e) => {
+            setVoice(e.target.value);
+            void ttsVoice.setValue(e.target.value);
+          }}
+        >
+          <option value="">自动</option>
+          {voices.map((v) => (
+            <option key={v.voiceURI} value={v.voiceURI}>
+              {v.name}（{v.lang}）
+            </option>
+          ))}
+        </select>
+        <button onClick={preview}>试听</button>
+      </div>
+      <div className="field">
+        <label htmlFor="rate">语速 {rate.toFixed(2)}</label>
+        <input
+          id="rate"
+          type="range"
+          min="0.5"
+          max="1.5"
+          step="0.05"
+          value={rate}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            setRate(v);
+            void ttsRate.setValue(v);
           }}
         />
       </div>

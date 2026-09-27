@@ -53,6 +53,27 @@ describe('alignTokens', () => {
     expect(alignTokens('abc', [1, 2])).toBeNull();
     expect(alignTokens('abc', 'abc')).toBeNull();
   });
+
+  it('uses UTF-16 offsets across astral chars (emoji)', () => {
+    const original = '我爱😀小明';
+    const spans = alignTokens(original, ['我爱', '😀', '小明']);
+    expect(spans).not.toBeNull();
+    expect(spans![1]).toEqual({ start: 2, end: 4, text: '😀' });
+    expect(spans![2]).toEqual({ start: 4, end: 6, text: '小明' });
+    for (const s of spans!)
+      expect(original.slice(s.start, s.end)).toBe(s.text);
+  });
+
+  it('uses UTF-16 offsets across CJK Ext-B chars', () => {
+    const original = '𠮷野家很好吃';
+    const spans = alignTokens(original, ['𠮷野家', '很', '好吃']);
+    expect(spans).not.toBeNull();
+    expect(spans![0]).toEqual({ start: 0, end: 4, text: '𠮷野家' });
+    expect(spans![1]).toEqual({ start: 4, end: 5, text: '很' });
+    expect(spans![2]).toEqual({ start: 5, end: 7, text: '好吃' });
+    for (const s of spans!)
+      expect(original.slice(s.start, s.end)).toBe(s.text);
+  });
 });
 
 describe('extractJsonArray', () => {

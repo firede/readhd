@@ -57,12 +57,14 @@ export function alignTokens(
   const joined = (tokens as string[]).join('');
   if (stripWs(joined) !== stripWs(original)) return null;
 
-  // Positions of non-whitespace chars in the original.
-  const origChars = [...original];
+  // UTF-16 positions of non-whitespace chars in the original (DOM Range and
+  // String#slice offsets are UTF-16, not code-point, offsets).
   const nwPos: number[] = [];
-  origChars.forEach((ch, i) => {
-    if (!WHITESPACE.test(ch)) nwPos.push(i);
-  });
+  let u16 = 0;
+  for (const ch of original) {
+    if (!WHITESPACE.test(ch)) nwPos.push(u16);
+    u16 += ch.length;
+  }
 
   const spans: TokenSpan[] = [];
   let cursor = 0; // index into nwPos
@@ -70,11 +72,14 @@ export function alignTokens(
     const tNw = [...token].filter((ch) => !WHITESPACE.test(ch)).length;
     if (tNw === 0) continue; // pure-whitespace token: contributes nothing
     let start = nwPos[cursor]!;
-    let end = nwPos[cursor + tNw - 1]! + 1;
+    const lastPos = nwPos[cursor + tNw - 1]!;
+    // Astral chars occupy 2 UTF-16 units.
+    const lastLen = String.fromCodePoint(original.codePointAt(lastPos)!).length;
+    let end = lastPos + lastLen;
     cursor += tNw;
     // Trim whitespace that belongs to the gaps between tokens.
-    while (start < end && WHITESPACE.test(origChars[start]!)) start++;
-    while (end > start && WHITESPACE.test(origChars[end - 1]!)) end--;
+    while (start < end && WHITESPACE.test(original[start]!)) start++;
+    while (end > start && WHITESPACE.test(original[end - 1]!)) end--;
     spans.push({ start, end, text: original.slice(start, end) });
   }
   return spans;

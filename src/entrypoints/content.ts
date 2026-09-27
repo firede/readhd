@@ -15,6 +15,7 @@ import {
   type HighlightName,
 } from '../lib/highlight';
 import { planMarks } from '../lib/marks';
+import { initReader, refreshReader } from '../lib/reader';
 import {
   analyzeParagraphLocal,
   analyzeParagraphCloud,
@@ -37,6 +38,11 @@ import {
   letterSpacing,
   fontScale,
   bgTheme,
+  readerFontSize,
+  readerWidth,
+  readerGap,
+  ttsRate,
+  ttsVoice,
   type StyleSettings,
 } from '../lib/settings';
 
@@ -55,10 +61,12 @@ export default defineContentScript({
     let observer: IntersectionObserver | null = null;
     let mutObserver: MutationObserver | null = null;
     const paragraphs = new Map<Element, Paragraph>();
+    const analyses = new Map<Element, Analysis>();
     const dirty = new Set<Element>();
     const pendingAdds = new Set<Element>();
     let firstPending = 0;
     let mutTimer: ReturnType<typeof setTimeout> | null = null;
+    let dbgSync: () => void = () => {};
 
     function flushMutations(): void {
       mutTimer = null;
@@ -69,6 +77,7 @@ export default defineContentScript({
           setRanges(block, []);
           observer?.unobserve(block);
           paragraphs.delete(block);
+          analyses.delete(block);
           dirty.delete(block);
         }
       }
@@ -90,6 +99,8 @@ export default defineContentScript({
     }
 
     function renderParagraph(p: Paragraph, analysis: Analysis): void {
+      analyses.set(p.block, analysis);
+      dbgSync();
       if (!settings || (!settings.altColor && !settings.fadeFunctionWords)) {
         setRanges(p.block, []);
         return;
@@ -168,6 +179,7 @@ export default defineContentScript({
     function recollectBlock(block: Element): void {
       setRanges(block, []);
       paragraphs.delete(block);
+      analyses.delete(block);
       observer!.unobserve(block);
       for (const p of collectParagraphs(block as HTMLElement)) {
         registerParagraph(p);
@@ -190,6 +202,8 @@ export default defineContentScript({
         el.style.removeProperty('--readhd-scale');
       }
       paragraphs.clear();
+      analyses.clear();
+      dbgSync();
       styleEl?.remove();
       styleEl = null;
       teardownRuler();
@@ -333,8 +347,34 @@ export default defineContentScript({
       settings = await getStyleSettings();
       if (active) teardown();
       init();
+      refreshReader(settings);
     }
 
+    // Reader listener is registered regardless of enabled state — opening the
+    // reader is an explicit user action.
+    initReader(
+      () => settings,
+      () => {
+        if (rulerHost) document.documentElement.appendChild(rulerHost);
+      },
+    );
+    // Dev-build only test hook: lets the e2e read the analysis actually used
+    // for rendering (isolated world — expose via a hidden DOM node's JSON).
+    let dbgEl: HTMLDivElement | null = null;
+    if (import.meta.env.DEV) {
+      dbgEl = document.createElement('div');
+      dbgEl.id = 'readhd-dbg';
+      dbgEl.hidden = true;
+      document.documentElement.appendChild(dbgEl);
+      dbgSync = () => {
+        const data: Record<string, unknown> = {};
+        for (const [block, p] of paragraphs) {
+          const a = analyses.get(block);
+          if (a) data[p.text] = a;
+        }
+        dbgEl!.textContent = JSON.stringify(data);
+      };
+    }
     void reload();
     for (const item of [
       enabled,
@@ -350,6 +390,11 @@ export default defineContentScript({
       letterSpacing,
       fontScale,
       bgTheme,
+      readerFontSize,
+      readerWidth,
+      readerGap,
+      ttsRate,
+      ttsVoice,
     ]) {
       item.watch(() => void reload());
     }

@@ -54,6 +54,22 @@ export const readingRuler = storage.defineItem<boolean>('sync:readingRuler', {
 export const rulerLines = storage.defineItem<1 | 2 | 3>('sync:rulerLines', {
   fallback: 2,
 });
+export type ReaderGap = 'none' | 'word' | 'chunk';
+export const readerFontSize = storage.defineItem<number>('sync:readerFontSize', {
+  fallback: 22,
+});
+export const readerWidth = storage.defineItem<number>('sync:readerWidth', {
+  fallback: 28,
+});
+export const readerGap = storage.defineItem<ReaderGap>('sync:readerGap', {
+  fallback: 'none',
+});
+export const ttsRate = storage.defineItem<number>('sync:ttsRate', {
+  fallback: 0.9,
+});
+export const ttsVoice = storage.defineItem<string>('sync:ttsVoice', {
+  fallback: '',
+});
 
 // local items
 export const apiKey = storage.defineItem<string>('local:apiKey', {
@@ -79,25 +95,53 @@ export interface StyleSettings {
   bgTheme: BgTheme;
   readingRuler: boolean;
   rulerLines: 1 | 2 | 3;
+  readerFontSize: number;
+  readerWidth: number;
+  readerGap: ReaderGap;
+  ttsRate: number;
+  ttsVoice: string;
 }
 
 export async function getStyleSettings(): Promise<StyleSettings> {
-  const [en, hosts, alt, preset, unit, fade, eng, lh, ls, fs, bg, ruler, rl] =
-    await Promise.all([
-      enabled.getValue(),
-      disabledHosts.getValue(),
-      altColor.getValue(),
-      colorPreset.getValue(),
-      colorUnit.getValue(),
-      fadeFunctionWords.getValue(),
-      engine.getValue(),
-      lineHeight.getValue(),
-      letterSpacing.getValue(),
-      fontScale.getValue(),
-      bgTheme.getValue(),
-      readingRuler.getValue(),
-      rulerLines.getValue(),
-    ]);
+  const [
+    en,
+    hosts,
+    alt,
+    preset,
+    unit,
+    fade,
+    eng,
+    lh,
+    ls,
+    fs,
+    bg,
+    ruler,
+    rl,
+    rfs,
+    rw,
+    rg,
+    tr,
+    tv,
+  ] = await Promise.all([
+    enabled.getValue(),
+    disabledHosts.getValue(),
+    altColor.getValue(),
+    colorPreset.getValue(),
+    colorUnit.getValue(),
+    fadeFunctionWords.getValue(),
+    engine.getValue(),
+    lineHeight.getValue(),
+    letterSpacing.getValue(),
+    fontScale.getValue(),
+    bgTheme.getValue(),
+    readingRuler.getValue(),
+    rulerLines.getValue(),
+    readerFontSize.getValue(),
+    readerWidth.getValue(),
+    readerGap.getValue(),
+    ttsRate.getValue(),
+    ttsVoice.getValue(),
+  ]);
   return {
     enabled: en,
     disabledHosts: hosts,
@@ -112,5 +156,10 @@ export async function getStyleSettings(): Promise<StyleSettings> {
     bgTheme: bg,
     readingRuler: ruler,
     rulerLines: rl,
+    readerFontSize: rfs,
+    readerWidth: rw,
+    readerGap: rg,
+    ttsRate: tr,
+    ttsVoice: tv,
   };
 }

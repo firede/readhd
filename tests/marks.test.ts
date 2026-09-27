@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planMarks } from '../src/lib/marks';
+import { planGaps, planMarks } from '../src/lib/marks';
 import type { Word } from '../src/lib/analysis';
 
 function w(text: string, start: number, pos: string | null, chunk: number | null): Word {
@@ -105,5 +105,53 @@ describe('planMarks', () => {
     expect(
       planMarks(CLOUD_WORDS, { alternate: false, unit: 'word', fade: false }),
     ).toEqual([]);
+  });
+});
+
+describe('planGaps', () => {
+  it('word mode: every word-like word followed by another gets a gap', () => {
+    // indices: 0小明 1在 2花盆 3里 4种下 5了 6三颗 7豆子 8。
+    const g = planGaps(CLOUD_WORDS, 'word');
+    expect([...g].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    // 豆子(7) is followed by punctuation → no gap; 。 is not word-like
+  });
+
+  it('word mode never gaps before punctuation', () => {
+    const words = [w('你好', 0, 'n', 0), w('，', 4, 'w', 0), w('世界', 5, 'n', 0)];
+    expect(planGaps(words, 'word').has(0)).toBe(false);
+    expect(planGaps(words, 'word').has(2)).toBe(false);
+  });
+
+  it('word mode skips whitespace between words', () => {
+    const words = [
+      w('你好', 0, 'n', 0),
+      w(' ', 4, null, 0),
+      w('世界', 5, 'n', 0),
+    ];
+    expect(planGaps(words, 'word').has(0)).toBe(true);
+  });
+
+  it('chunk mode: gap at last word-like word of each chunk', () => {
+    const g = planGaps(CLOUD_WORDS, 'chunk');
+    // chunk0 last: 小明(0); chunk1 last: 里(3); chunk2 last: 豆子(7) — next is
+    // punctuation in chunk3 → no gap. chunk3 has no word-like word.
+    expect([...g].sort((a, b) => a - b)).toEqual([0, 3]);
+  });
+
+  it('chunk mode: no gap across punctuation even when chunks differ', () => {
+    const words = [
+      w('你好', 0, 'n', 0),
+      w('，', 2, 'w', 1),
+      w('世界', 3, 'n', 2),
+    ];
+    expect(planGaps(words, 'chunk').size).toBe(0);
+  });
+
+  it('chunk mode: missing chunk info → no gaps', () => {
+    expect(planGaps(LOCAL_WORDS, 'chunk').size).toBe(0);
+  });
+
+  it('none mode → empty', () => {
+    expect(planGaps(CLOUD_WORDS, 'none').size).toBe(0);
   });
 });

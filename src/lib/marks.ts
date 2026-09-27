@@ -64,3 +64,42 @@ export function planMarks(words: Word[], opts: PlanOpts): Mark[] {
   }
   return marks;
 }
+
+const WS_ONLY = /^\s+$/u;
+
+function nextWordIndex(words: Word[], from: number): number {
+  // Next word after `from`, skipping whitespace-only words. Returns -1 when
+  // the next non-whitespace word is punctuation (or there is none).
+  for (let j = from + 1; j < words.length; j++) {
+    const t = words[j]!.text;
+    if (WS_ONLY.test(t)) continue;
+    return isWordLike(t) ? j : -1;
+  }
+  return -1;
+}
+
+/**
+ * Word indices that get a trailing gap.
+ * - 'word': every word-like word followed (after optional whitespace) by
+ *   another word-like word.
+ * - 'chunk': the last word-like word of a chunk when the next word-like word
+ *   is adjacent (only whitespace between, no punctuation) and belongs to a
+ *   different chunk. Missing chunk info → no gaps.
+ */
+export function planGaps(words: Word[], mode: 'none' | 'word' | 'chunk'): Set<number> {
+  const out = new Set<number>();
+  if (mode === 'none') return out;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!;
+    if (!isWordLike(w.text)) continue;
+    const j = nextWordIndex(words, i);
+    if (j < 0) continue;
+    if (mode === 'word') {
+      out.add(i);
+    } else {
+      if (w.chunk === null || words[j]!.chunk === null) continue;
+      if (words[j]!.chunk !== w.chunk) out.add(i);
+    }
+  }
+  return out;
+}

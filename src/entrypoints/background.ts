@@ -132,6 +132,18 @@ async function sendBatch(batch: QueueItem[]): Promise<void> {
 }
 
 export default defineBackground(() => {
+  browser.commands?.onCommand.addListener((cmd) => {
+    if (cmd !== 'toggle-reader') return;
+    void browser.tabs
+      .query({ active: true, currentWindow: true })
+      .then((tabs) => {
+        const id = tabs[0]?.id;
+        if (id != null) {
+          return browser.tabs.sendMessage(id, { type: 'toggleReader' });
+        }
+      })
+      .catch(() => {});
+  });
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'analyze' && Array.isArray(msg.texts)) {
       const texts = msg.texts as string[];

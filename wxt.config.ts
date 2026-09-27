@@ -8,6 +8,12 @@ export default defineConfig({
     description: '帮助有阅读困难的孩子更轻松地阅读中文网页',
     permissions: ['storage', 'activeTab'],
     host_permissions: ['https://api.minimax.cn/*'],
+    commands: {
+      'toggle-reader': {
+        suggested_key: { default: 'Alt+Shift+R' },
+        description: '切换阅读模式',
+      },
+    },
   },
   vite: (env) => ({
     define: {
