@@ -6,7 +6,9 @@ import {
   bgTheme,
   colorPreset,
   colorUnit,
-  disabledHosts,
+  allowRules,
+  blockRules,
+  siteMode,
   enabled,
   engine,
   fadeFunctionWords,
@@ -22,6 +24,13 @@ import {
   type ColorUnit,
   type Engine,
 } from '../../lib/settings';
+import {
+  isSiteEnabled,
+  matchingRules,
+  parseRule,
+  suggestRule,
+  type SiteMode,
+} from '../../lib/site-rules';
 import { analyzeStatus } from '../../lib/analyzer';
 import {
   readerShortcut,
@@ -163,9 +172,12 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [on, setOn] = useState(true);
   const [host, setHost] = useState('');
+  const [tabUrl, setTabUrl] = useState('');
   const [isWebPage, setIsWebPage] = useState(false);
-  const [hostOn, setHostOn] = useState(true);
-  const [hosts, setHosts] = useState<string[]>([]);
+  const [mode, setMode] = useState<SiteMode>('allowlist');
+  const [allow, setAllow] = useState<string[]>([]);
+  const [block, setBlock] = useState<string[]>([]);
+  const [confirmRules, setConfirmRules] = useState<string[]>([]);
   const [alt, setAlt] = useState(true);
   const [preset, setPreset] = useState<ColorPreset>('blue');
   const [unit, setUnit] = useState<ColorUnit>('chunk');
@@ -192,10 +204,13 @@ export default function App() {
         !!tab?.url &&
         (tab.url.startsWith('http://') || tab.url.startsWith('https://'));
       const h = web ? new URL(tab.url!).hostname : '';
-      const [en, hs, a, p, u, fd, e, l, s, f, b, rr, rl, st, le, ud, scv] =
+      const tabUrl = web ? tab.url! : '';
+      const [en, sm, ar, br, a, p, u, fd, e, l, s, f, b, rr, rl, st, le, ud, scv] =
         await Promise.all([
           enabled.getValue(),
-          disabledHosts.getValue(),
+          siteMode.getValue(),
+          allowRules.getValue(),
+          blockRules.getValue(),
           altColor.getValue(),
           colorPreset.getValue(),
           colorUnit.getValue(),
@@ -213,10 +228,12 @@ export default function App() {
           readerShortcut(),
         ]);
       setOn(en);
-      setHosts(hs);
+      setMode(sm);
+      setAllow(ar);
+      setBlock(br);
       setHost(h);
+      setTabUrl(tabUrl);
       setIsWebPage(web);
-      setHostOn(!hs.includes(h));
       setAlt(a);
       setPreset(p);
       setUnit(u);
@@ -245,12 +262,37 @@ export default function App() {
     })();
   }, []);
 
-  async function toggleHost(v: boolean) {
-    if (!host) return;
-    const next = v ? hosts.filter((x) => x !== host) : [...hosts, host];
-    setHosts(next);
-    setHostOn(v);
-    await disabledHosts.setValue(next);
+  // --- site rules ---
+  const curRules = mode === 'allowlist' ? allow : block;
+  const curItem = mode === 'allowlist' ? allowRules : blockRules;
+  const setCur = mode === 'allowlist' ? setAllow : setBlock;
+  const siteOn = isWebPage && isSiteEnabled(tabUrl, mode, curRules);
+  const matched = isWebPage ? matchingRules(curRules, tabUrl) : [];
+  const siteRule = tabUrl ? suggestRule(tabUrl, 'site') : null;
+  const sectionRule = tabUrl ? suggestRule(tabUrl, 'section') : null;
+
+  async function addRule(text: string) {
+    if (!text || curRules.includes(text)) return;
+    const next = [...curRules, text];
+    setCur(next);
+    await curItem.setValue(next);
+  }
+
+  async function removeRules(texts: string[]) {
+    const next = curRules.filter((r) => !texts.includes(r));
+    setCur(next);
+    setConfirmRules([]);
+    await curItem.setValue(next);
+  }
+
+  function requestRemove() {
+    // Confirm first when removing a rule broader than this exact page.
+    const needsConfirm = matched.some((t) => {
+      const p = parseRule(t);
+      return 'rule' in p && (p.rule.host !== host || p.rule.path !== '');
+    });
+    if (needsConfirm) setConfirmRules(matched);
+    else void removeRules(matched);
   }
 
   function openOptions(hash = '') {
@@ -292,14 +334,86 @@ export default function App() {
       </header>
 
       {isWebPage ? (
-        <div className="rh-row site">
-          <span className="grow">在 {host} 上启用</span>
-          <Switch
-            checked={hostOn}
-            label={`在 ${host} 上启用`}
-            onChange={(v) => void toggleHost(v)}
-          />
-        </div>
+        <Card title={host} className="sitecard">
+          <StatusBadge kind={on && siteOn ? 'ok' : 'muted'}>
+            {on && siteOn ? '此网站已启用' : '此网站未启用'}
+          </StatusBadge>
+          {matched.length > 0 && (
+            <div className="rh-muted siterules">
+              匹配规则：{matched.join('、')}
+            </div>
+          )}
+          {!on ? (
+            <div className="rh-muted">ReadHD 已全部关闭</div>
+          ) : confirmRules.length > 0 ? (
+            <div className="siteconfirm">
+              <div className="rh-muted">
+                将移除规则：{confirmRules.join('、')}
+              </div>
+              <div className="btnrow">
+                <Button
+                  variant="secondary"
+                  onClick={() => void removeRules(confirmRules)}
+                >
+                  确定
+                </Button>
+                <Button variant="ghost" onClick={() => setConfirmRules([])}>
+                  取消
+                </Button>
+              </div>
+            </div>
+          ) : mode === 'allowlist' && !siteOn ? (
+            <>
+              <Button
+                variant="primary"
+                onClick={() => siteRule && void addRule(siteRule)}
+              >
+                在此网站启用
+              </Button>
+              {sectionRule && (
+                <button
+                  className="linklike"
+                  onClick={() => void addRule(sectionRule)}
+                >
+                  只在当前栏目启用（{sectionRule}）
+                </button>
+              )}
+            </>
+          ) : mode === 'allowlist' ? (
+            <Button variant="secondary" onClick={requestRemove}>
+              在此网站停用
+            </Button>
+          ) : siteOn ? (
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => siteRule && void addRule(siteRule)}
+              >
+                在此网站停用
+              </Button>
+              {sectionRule && (
+                <button
+                  className="linklike"
+                  onClick={() => void addRule(sectionRule)}
+                >
+                  只在当前栏目停用（{sectionRule}）
+                </button>
+              )}
+            </>
+          ) : (
+            <Button variant="primary" onClick={requestRemove}>
+              恢复启用
+            </Button>
+          )}
+          <div>
+            <button
+              className="linklike"
+              onClick={() => openOptions('#sites')}
+            >
+              管理网站规则
+            </button>
+          </div>
+        </Card>
       ) : (
         <div className="rh-muted site">此页面不支持</div>
       )}

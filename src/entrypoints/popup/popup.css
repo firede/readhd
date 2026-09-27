@@ -27,6 +27,22 @@ body {
 .site {
   min-height: 32px;
 }
+.sitecard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sitecard .rh-card-title {
+  word-break: break-all;
+}
+.siterules {
+  font-size: 12px;
+}
+.siteconfirm .btnrow {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 .rh-badge {
   width: 100%;
   box-sizing: border-box;

@@ -249,3 +249,106 @@ kbd {
   gap: 10px;
   margin-top: 8px;
 }
+
+/* site rules */
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--brand);
+  cursor: pointer;
+}
+.linklike:hover {
+  text-decoration: underline;
+}
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.iconbtn:hover {
+  background: var(--surface);
+  color: var(--danger);
+}
+.rulelist {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.rrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+.rrow .grow {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+.rulehint {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.rulehint.err {
+  color: var(--danger);
+}
+.batchbox {
+  margin: 8px 0;
+}
+.batchbox textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--bg);
+  color: var(--text);
+}
+.rtoast {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+.helpbox {
+  margin-top: 18px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.helpbox > :first-child {
+  margin-top: 0;
+}
+.helpbox > :last-child {
+  margin-bottom: 0;
+}
+.rulehelp {
+  margin: 0;
+  padding-left: 20px;
+}
+.rulehelp code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.help-item .rulehelp code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

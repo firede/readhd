@@ -21,6 +21,18 @@ export const TIP_GAP =
   '在词或意群之间加一点空隙。有研究发现加空隙对一部分孩子有帮助，但也有孩子不习惯；不习惯的话，只用颜色区分就好。';
 export const HELP_TTS =
   '一句一句地朗读，正在读的句子会高亮。点一下任意句子，就从那里开始读。';
+export const SITE_RULE_EXAMPLES: [string, string][] = [
+  [
+    'example.com',
+    '这个网站和它的所有子域名，例如 www.example.com、news.example.com。',
+  ],
+  ['news.example.com', '只匹配这个子域名。'],
+  ['example.com/news', '只匹配这个网站 /news 栏目下的页面。'],
+];
+export const HELP_SITE_RULES_TAIL =
+  '不用写 http:// 或 https://，写了也会自动去掉。';
+export const HELP_SITE_RULES_READER =
+  '阅读模式不受网站规则限制，在任何网站都可以手动打开。';
 export const NOTE_PRIVACY =
   '开启模型分析后，网页上的中文段落会发送给你选择的模型服务商进行分析。API Key 只保存在这台电脑的浏览器里，不会同步到其他设备，也不会发送给服务商以外的任何地方。';
 export const NOTE_USAGE =

@@ -16,7 +16,14 @@ export type ColorUnit = 'word' | 'chunk';
 export const enabled = storage.defineItem<boolean>('sync:enabled', {
   fallback: true,
 });
-export const disabledHosts = storage.defineItem<string[]>('sync:disabledHosts', {
+export const siteMode = storage.defineItem<'allowlist' | 'blocklist'>(
+  'sync:siteMode',
+  { fallback: 'allowlist' },
+);
+export const allowRules = storage.defineItem<string[]>('sync:allowRules', {
+  fallback: [],
+});
+export const blockRules = storage.defineItem<string[]>('sync:blockRules', {
   fallback: [],
 });
 export const altColor = storage.defineItem<boolean>('sync:altColor', {
@@ -87,7 +94,9 @@ export const lastError = storage.defineItem<{
 } | null>('local:lastError', { fallback: null });
 export interface StyleSettings {
   enabled: boolean;
-  disabledHosts: string[];
+  siteMode: import('./site-rules').SiteMode;
+  allowRules: string[];
+  blockRules: string[];
   altColor: boolean;
   colorPreset: ColorPreset;
   colorUnit: ColorUnit;
@@ -109,7 +118,9 @@ export interface StyleSettings {
 export async function getStyleSettings(): Promise<StyleSettings> {
   const [
     en,
-    hosts,
+    sm,
+    ar,
+    br,
     alt,
     preset,
     unit,
@@ -128,7 +139,9 @@ export async function getStyleSettings(): Promise<StyleSettings> {
     tv,
   ] = await Promise.all([
     enabled.getValue(),
-    disabledHosts.getValue(),
+    siteMode.getValue(),
+    allowRules.getValue(),
+    blockRules.getValue(),
     altColor.getValue(),
     colorPreset.getValue(),
     colorUnit.getValue(),
@@ -148,7 +161,9 @@ export async function getStyleSettings(): Promise<StyleSettings> {
   ]);
   return {
     enabled: en,
-    disabledHosts: hosts,
+    siteMode: sm,
+    allowRules: ar,
+    blockRules: br,
     altColor: alt,
     colorPreset: preset,
     colorUnit: unit,

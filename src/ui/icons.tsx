@@ -86,6 +86,16 @@ export const IconTextSize = ({ size = 18 }: IconProps) =>
     <path key="c" d="M16 19l3-6 3 6" strokeWidth="1.4" />,
   ]);
 
+export const IconGlobe = ({ size = 18 }: IconProps) =>
+  svg(size, [
+    <circle key="c" cx="12" cy="12" r="9" />,
+    <path key="a" d="M3 12h18" />,
+    <path
+      key="b"
+      d="M12 3a13.5 13.5 0 0 1 0 18M12 3a13.5 13.5 0 0 0 0 18"
+    />,
+  ]);
+
 export const IconExternal = ({ size = 13 }: IconProps) =>
   svg(size, [
     <path key="a" d="M14 4h6v6" />,

@@ -12,6 +12,7 @@ import {
   type UsageEntry,
 } from '../lib/usage';
 import { usageLog, usageDaily, lastError } from '../lib/settings';
+import { migrateSiteRules } from '../lib/site-migration';
 
 const DEBOUNCE_MS = 150;
 const MAX_BATCH_CHARS = 600;
@@ -292,12 +293,20 @@ export default defineBackground(() => {
     .catch(() => {});
 
   browser.runtime.onInstalled.addListener((d) => {
+    void migrateSiteRules(browser.storage.sync, d.reason);
     if (d.reason === 'install') {
       void browser.tabs.create({
         url: browser.runtime.getURL('/options.html#welcome'),
       });
     }
   });
+
+  // Dev-build only: lets the e2e invoke the update migration on demand.
+  if (import.meta.env.DEV) {
+    (globalThis as Record<string, unknown>).__migrateSiteRules = (
+      reason: string,
+    ) => migrateSiteRules(browser.storage.sync, reason);
+  }
 
   browser.commands?.onCommand.addListener((cmd) => {
     if (cmd !== 'toggle-reader') return;

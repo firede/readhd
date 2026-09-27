@@ -4,6 +4,7 @@ import { browser } from 'wxt/browser';
 import { ModelsSection } from './models';
 import { UsageSection } from './usage';
 import { TtsSection } from './tts';
+import { SitesSection, SiteRuleHelp } from './sites';
 import {
   ABOUT_TEXT,
   HELP_TTS,
@@ -18,6 +19,7 @@ import {
 import {
   IconBook,
   IconChart,
+  IconGlobe,
   IconHelp,
   IconPlay,
   IconSettings,
@@ -28,10 +30,11 @@ import {
 } from '../../lib/shortcut';
 import './options.css';
 
-type Page = 'welcome' | 'models' | 'usage' | 'tts' | 'help' | 'about';
+type Page = 'welcome' | 'models' | 'sites' | 'usage' | 'tts' | 'help' | 'about';
 
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: 'models', label: '模型服务', icon: <IconSettings /> },
+  { id: 'sites', label: '网站规则', icon: <IconGlobe /> },
   { id: 'usage', label: '用量记录', icon: <IconChart /> },
   { id: 'tts', label: '朗读', icon: <IconPlay /> },
   { id: 'help', label: '帮助', icon: <IconHelp /> },
@@ -48,9 +51,10 @@ function Help() {
   useEffect(() => {
     void readerShortcut().then(setSc);
   }, []);
-  const items: [string, string][] = [
+  const items: [string, React.ReactNode][] = [
     ['“词”和“意群”有什么区别？', `${TIP_WORD}\n\n${TIP_CHUNK}`],
     ['阅读模式', helpReader(sc?.full ?? null)],
+    ['网站规则', <SiteRuleHelp />],
     ['词间空隙', TIP_GAP],
     ['淡化虚词', TIP_FADE],
     ['阅读尺', TIP_RULER],
@@ -62,9 +66,9 @@ function Help() {
       {items.map(([t, body], i) => (
         <section key={t} id={i === 0 ? 'help-units' : undefined} className="help-item">
           <h3>{t}</h3>
-          {body.split('\n\n').map((p, i) => (
-            <p key={i}>{p}</p>
-          ))}
+          {typeof body === 'string'
+            ? body.split('\n\n').map((p, i) => <p key={i}>{p}</p>)
+            : body}
         </section>
       ))}
       <section className="help-item">
@@ -136,7 +140,9 @@ function Welcome({ go }: { go: (p: Page) => void }) {
             了解“词”和“意群”
           </a>
         </li>
-        <li className="rh-muted">打开任意中文网页试试</li>
+        <li className="rh-muted">
+          打开想要辅助阅读的网站，在 ReadHD 弹窗里点“在此网站启用”
+        </li>
       </ol>
       <div className="welcome-btns">
         <button className="rh-btn primary" onClick={() => go('models')}>
@@ -183,6 +189,7 @@ function Options() {
       <main className="main">
         {page === 'welcome' && <Welcome go={go} />}
         {page === 'models' && <ModelsSection />}
+        {page === 'sites' && <SitesSection />}
         {page === 'usage' && <UsageSection />}
         {page === 'tts' && <TtsSection />}
         {page === 'help' && <Help />}

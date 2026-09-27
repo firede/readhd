@@ -93,12 +93,13 @@ const ctx = await chromium.launchPersistentContext(profile, {
   ],
 });
 
-// MV3 service workers start lazily; load the fixture first so the content
-// script (engine=cloud by default) wakes it up.
+// MV3 service workers start lazily; the SW registers on install, so just
+// wait for it. (The fixture content script no longer wakes it — a fresh
+// profile starts in allowlist mode with an empty list, i.e. inactive.)
 const boot = await ctx.newPage();
 await boot.goto(fixtureUrl);
 let sw = ctx.serviceWorkers()[0];
-if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 20000 });
+if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 30000 });
 const extId = new URL(sw.url()).hostname;
 console.log('extension id:', extId);
 
@@ -177,7 +178,183 @@ async function waitForToken(page, text, timeout = 25000) {
     .catch(() => false);
 }
 
+// --- M5: site rules ---
+// Fresh profile defaults: allowlist mode, empty list → content script is
+// inactive on the fixture page.
+await setSync({ engine: 'local', enabled: true, altColor: true, colorUnit: 'word' });
+const rp0 = await ctx.newPage();
+await rp0.goto(fixtureUrl);
+await rp0.waitForTimeout(2000);
+const emptyStats = await hlStats(rp0);
+check(
+  'site rules: empty allowlist → no highlights',
+  Object.values(emptyStats).every((v) => v <= 0),
+  JSON.stringify(emptyStats),
+);
+
+// adding a host rule enables the page live (no reload)
+await setSync({ allowRules: ['127.0.0.1'] });
+const appeared = await rp0
+  .waitForFunction(
+    () => (CSS.highlights.get('readhd-light-a')?.size ?? 0) > 0,
+    { timeout: 15000 },
+  )
+  .then(() => true)
+  .catch(() => false);
+check('site rules: adding allow rule highlights live', appeared);
+
+// path rule scopes to a section
+await setSync({ allowRules: ['127.0.0.1/sect'] });
+const sp = await ctx.newPage();
+await sp.goto(`http://127.0.0.1:${port}/sect/a.html`);
+await sp.waitForTimeout(2000);
+const sectStats = await hlStats(sp);
+const spOther = await ctx.newPage();
+await spOther.goto(`http://127.0.0.1:${port}/other/b.html`);
+await spOther.waitForTimeout(2000);
+const otherStats = await hlStats(spOther);
+check(
+  'site rules: path rule enables only matching section',
+  sectStats['readhd-light-a'] > 0 &&
+    Object.values(otherStats).every((v) => v <= 0),
+  JSON.stringify({ sect: sectStats['readhd-light-a'], other: otherStats }),
+);
+await spOther.close();
+
+// SPA navigation: pushState off the section clears, push back restores
+await sp.evaluate(() => history.pushState({}, '', '/other/c.html'));
+const spaCleared = await sp
+  .waitForFunction(
+    () => [...CSS.highlights.values()].every((h) => h.size === 0),
+    { timeout: 8000 },
+  )
+  .then(() => true)
+  .catch(() => false);
+check('site rules: SPA nav to non-matching path clears', spaCleared);
+await sp.evaluate(() => history.pushState({}, '', '/sect/a.html'));
+const spaBack = await sp
+  .waitForFunction(
+    () => (CSS.highlights.get('readhd-light-a')?.size ?? 0) > 0,
+    { timeout: 8000 },
+  )
+  .then(() => true)
+  .catch(() => false);
+check('site rules: SPA nav back restores highlights', spaBack);
+await sp.close();
+
+// blocklist mode: matching host → off; other rules empty → on
+await setSync({ siteMode: 'blocklist', allowRules: [], blockRules: ['127.0.0.1'] });
+const bp2 = await ctx.newPage();
+await bp2.goto(fixtureUrl);
+await bp2.waitForTimeout(2000);
+const blStats = await hlStats(bp2);
+check(
+  'site rules: blocklist host → no highlights',
+  Object.values(blStats).every((v) => v <= 0),
+  JSON.stringify(blStats),
+);
+await setSync({ blockRules: [] });
+const blOn = await bp2
+  .waitForFunction(
+    () => (CSS.highlights.get('readhd-light-a')?.size ?? 0) > 0,
+    { timeout: 15000 },
+  )
+  .then(() => true)
+  .catch(() => false);
+check('site rules: removing block rule re-enables', blOn);
+await bp2.close();
+await rp0.close();
+
+// popup site card (stub the active tab)
+async function popupWith(url) {
+  const pop = await ctx.newPage();
+  await pop.addInitScript((u) => {
+    const orig = chrome.tabs.query.bind(chrome.tabs);
+    chrome.tabs.query = (q) =>
+      q?.active ? Promise.resolve([{ id: 1, url: u }]) : orig(q);
+  }, url);
+  await pop.goto(`chrome-extension://${extId}/popup.html`);
+  await pop.waitForTimeout(900);
+  return pop;
+}
+await setSync({ siteMode: 'allowlist', allowRules: [] });
+{
+  const pop = await popupWith(`http://127.0.0.1:${port}/sect/a.html`);
+  check(
+    'popup: allowlist not-enabled → 在此网站启用',
+    await pop.evaluate(() => document.body.textContent.includes('在此网站启用')),
+  );
+  check(
+    'popup: section link shown on directory path',
+    await pop.evaluate(() =>
+      document.body.textContent.includes('只在当前栏目启用（127.0.0.1/sect）'),
+    ),
+  );
+  await shot(pop, 'm5-popup-not-enabled.png');
+  await pop.click('button:has-text("在此网站启用")');
+  await pop.waitForTimeout(600);
+  const added = await pop.evaluate(
+    () => chrome.storage.sync.get('allowRules').then((r) => r.allowRules),
+  );
+  check(
+    'popup: 启用 adds host rule',
+    Array.isArray(added) && added.includes('127.0.0.1'),
+    JSON.stringify(added),
+  );
+  await pop.waitForTimeout(400);
+  await shot(pop, 'm5-popup-enabled.png');
+  // disable → rule removed (host rule == current host → no confirm)
+  await pop.click('button:has-text("在此网站停用")');
+  await pop.waitForTimeout(600);
+  const after = await pop.evaluate(
+    () => chrome.storage.sync.get('allowRules').then((r) => r.allowRules),
+  );
+  check(
+    'popup: 停用 removes matching rule',
+    Array.isArray(after) && !after.includes('127.0.0.1'),
+    JSON.stringify(after),
+  );
+  await pop.close();
+}
+{
+  // subdomain page + parent rule → confirm before removal
+  await setSync({ allowRules: ['example.com'] });
+  const pop = await popupWith('http://news.example.com/x');
+  await pop.click('button:has-text("在此网站停用")');
+  await pop.waitForTimeout(400);
+  check(
+    'popup: broader rule → confirm shown',
+    await pop.evaluate(() => document.body.textContent.includes('将移除规则：example.com')),
+  );
+  await shot(pop, 'm5-popup-confirm.png');
+  await pop.click('button:has-text("确定")');
+  await pop.waitForTimeout(500);
+  const after = await pop.evaluate(
+    () => chrome.storage.sync.get('allowRules').then((r) => r.allowRules),
+  );
+  check(
+    'popup: confirm removes rule',
+    Array.isArray(after) && after.length === 0,
+    JSON.stringify(after),
+  );
+  await pop.close();
+}
+// reader still opens on a non-enabled site
+{
+  const np = await ctx.newPage();
+  await np.goto(fixtureUrl);
+  await np.waitForTimeout(1500);
+  await toggleReaderOn(np.url());
+  await np.waitForTimeout(1500);
+  check(
+    'reader opens on non-enabled site',
+    await np.evaluate(() => !!document.querySelector('div.readhd-root#readhd-reader')),
+  );
+  await np.close();
+}
+
 // --- fixture page, local engine, word mode ---
+await setSync({ siteMode: 'blocklist', blockRules: [], allowRules: [] });
 await setSync({ engine: 'local', enabled: true, altColor: true, colorUnit: 'word' });
 const page = await ctx.newPage();
 await page.goto(fixtureUrl);
@@ -430,7 +607,7 @@ if (!popupShot) {
   check(
     'popup host switch visible (mocked active tab)',
     await popup.evaluate(() =>
-      /上启用|此页面不支持/.test(document.body.textContent),
+      /上启用|已启用|停用|此页面不支持/.test(document.body.textContent),
     ),
   );
   await shot(popup, 'm2a-popup.png');
@@ -785,6 +962,38 @@ if (dev) {
   check('content script cannot read storage.local', lr.startsWith('err:'), lr);
   await probe.close();
 
+  // migration: legacy disabledHosts → blocklist + blockRules (update path)
+  {
+    const p = await ctx.newPage();
+    await p.goto(`chrome-extension://${extId}/options.html`);
+    await p.evaluate(() =>
+      chrome.storage.sync.set({ disabledHosts: ['old.example.com'] }),
+    );
+    await p.evaluate(() => chrome.storage.sync.remove('siteMode'));
+    // the SW may be idle-terminated by now; ping it to wake it
+    await p.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'analyzeStatus' }),
+    );
+    await p.close();
+    const swv = ctx.serviceWorkers()[0];
+    const mres = await swv.evaluate(() => globalThis.__migrateSiteRules('update'));
+    const p2 = await ctx.newPage();
+    await p2.goto(`chrome-extension://${extId}/options.html`);
+    const mv = await p2.evaluate(() =>
+      chrome.storage.sync.get(['siteMode', 'blockRules', 'disabledHosts']),
+    );
+    await p2.close();
+    check(
+      'migration: disabledHosts → blocklist + blockRules',
+      mres === 'migrated' &&
+        mv.siteMode === 'blocklist' &&
+        JSON.stringify(mv.blockRules) === '["old.example.com"]' &&
+        mv.disabledHosts === undefined,
+      JSON.stringify({ mres, mv }),
+    );
+    await setSync({ siteMode: 'blocklist', blockRules: [] });
+  }
+
   // custom OpenAI-compatible provider via storage → mock server
   await setLocal({
     'providerConfigs': {
@@ -910,6 +1119,26 @@ if (dev) {
     await shot(o, name);
     await o.close();
   };
+  // M5: sites page screenshots — empty state, populated + preview + test
+  // result, and parse error.
+  await setSync({ siteMode: 'allowlist', allowRules: [], blockRules: [] });
+  await optShot('#sites', 'm5-options-sites-empty.png');
+  await setSync({ allowRules: ['example.com', '127.0.0.1/sect'] });
+  {
+    const o = await ctx.newPage();
+    await o.goto(`chrome-extension://${extId}/options.html#sites`);
+    await o.waitForTimeout(800);
+    await o.fill('#rule-input', 'https://www.Site.com/News/');
+    await o.fill('#rule-test', 'https://sub.example.com/news/a');
+    await o.waitForTimeout(400);
+    await shot(o, 'm5-options-sites.png');
+    await o.fill('#rule-input', 'not a host');
+    await o.waitForTimeout(300);
+    await shot(o, 'm5-options-sites-error.png');
+    await o.close();
+  }
+  await setSync({ siteMode: 'blocklist', allowRules: [], blockRules: [] });
+
   await optShot('#welcome', 'm3-options-welcome.png');
 
   // models: select MiniMax（国内）card and run a real 测试连接 (dev key

@@ -16,6 +16,7 @@ import {
   type HighlightName,
 } from '../lib/highlight';
 import { planMarks } from '../lib/marks';
+import { isSiteEnabled } from '../lib/site-rules';
 import { initReader, refreshReader } from '../lib/reader';
 import {
   analyzeParagraphLocal,
@@ -27,7 +28,9 @@ import {
   BG_THEME_COLORS,
   getStyleSettings,
   enabled,
-  disabledHosts,
+  siteMode,
+  allowRules,
+  blockRules,
   altColor,
   colorPreset,
   colorUnit,
@@ -91,11 +94,18 @@ export default defineContentScript({
       dirty.clear();
     }
 
-    function hostDisabled(): boolean {
-      return (
-        !settings ||
-        !settings.enabled ||
-        settings.disabledHosts.includes(location.hostname)
+    function siteDisabled(): boolean {
+      return !settings || !settings.enabled || !urlEnabled();
+    }
+
+    function urlEnabled(): boolean {
+      if (!settings) return false;
+      return isSiteEnabled(
+        location.href,
+        settings.siteMode,
+        settings.siteMode === 'allowlist'
+          ? settings.allowRules
+          : settings.blockRules,
       );
     }
 
@@ -291,7 +301,7 @@ export default defineContentScript({
     }
 
     function init(): void {
-      if (!settings || hostDisabled()) return;
+      if (!settings || siteDisabled()) return;
       active = true;
       ensureHighlightsRegistered();
       styleEl = document.createElement('style');
@@ -389,7 +399,9 @@ export default defineContentScript({
     void reload();
     for (const item of [
       enabled,
-      disabledHosts,
+      siteMode,
+      allowRules,
+      blockRules,
       altColor,
       colorPreset,
       colorUnit,
@@ -409,5 +421,22 @@ export default defineContentScript({
     ]) {
       item.watch(() => void reload());
     }
+
+    // SPA navigations change location.href without a reload — path rules mean
+    // the enabled state can flip. Tear down / bring up only on an actual flip.
+    let lastHref = location.href;
+    const onMaybeNav = () => {
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      const shouldBe = !!settings && settings.enabled && urlEnabled();
+      if (shouldBe === active) return;
+      if (shouldBe) init();
+      else teardown();
+    };
+    (
+      window as unknown as { navigation?: EventTarget }
+    ).navigation?.addEventListener('navigatesuccess', onMaybeNav);
+    window.addEventListener('popstate', onMaybeNav);
+    setInterval(onMaybeNav, 1000);
   },
 });
