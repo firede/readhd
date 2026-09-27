@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ttsRate, ttsVoice } from '../../lib/settings';
+import { pickAutoVoice, pickVoice } from '../../lib/tts';
 import { HELP_TTS } from '../../ui/copy';
 
 const TTS_SAMPLE = '小明在花盆里种下了三颗豆子。';
@@ -24,13 +25,15 @@ export function TtsSection() {
     return () => speechSynthesis.removeEventListener('voiceschanged', load);
   }, []);
 
+  const auto = pickAutoVoice(voices);
+
   function preview() {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(TTS_SAMPLE);
     u.lang = 'zh-CN';
     u.rate = rate;
-    const v = voices.find((x) => x.voiceURI === voice);
-    if (v) u.voice = v;
+    const v = pickVoice(voices, voice);
+    if (v) u.voice = v as SpeechSynthesisVoice;
     speechSynthesis.speak(u);
   }
 
@@ -48,7 +51,9 @@ export function TtsSection() {
             void ttsVoice.setValue(e.target.value);
           }}
         >
-          <option value="">自动</option>
+          <option value="">
+            {auto ? `自动（${auto.name.split(' (')[0]}）` : '自动'}
+          </option>
           {voices.map((v) => (
             <option key={v.voiceURI} value={v.voiceURI}>
               {v.name}（{v.lang}）

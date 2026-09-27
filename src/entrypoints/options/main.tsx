@@ -6,8 +6,9 @@ import { UsageSection } from './usage';
 import { TtsSection } from './tts';
 import {
   ABOUT_TEXT,
-  HELP_READER,
   HELP_TTS,
+  SHORTCUT_UNBOUND,
+  helpReader,
   TIP_CHUNK,
   TIP_FADE,
   TIP_GAP,
@@ -21,6 +22,10 @@ import {
   IconPlay,
   IconSettings,
 } from '../../ui/icons';
+import {
+  readerShortcut,
+  type FormattedShortcut,
+} from '../../lib/shortcut';
 import './options.css';
 
 type Page = 'welcome' | 'models' | 'usage' | 'tts' | 'help' | 'about';
@@ -39,9 +44,13 @@ function currentPage(): Page {
 }
 
 function Help() {
+  const [sc, setSc] = useState<FormattedShortcut | null>(null);
+  useEffect(() => {
+    void readerShortcut().then(setSc);
+  }, []);
   const items: [string, string][] = [
     ['“词”和“意群”有什么区别？', `${TIP_WORD}\n\n${TIP_CHUNK}`],
-    ['阅读模式', HELP_READER],
+    ['阅读模式', helpReader(sc?.full ?? null)],
     ['词间空隙', TIP_GAP],
     ['淡化虚词', TIP_FADE],
     ['阅读尺', TIP_RULER],
@@ -63,9 +72,7 @@ function Help() {
         <table className="keys">
           <tbody>
             <tr>
-              <td>
-                <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>
-              </td>
+              <td>{sc ? sc.full : SHORTCUT_UNBOUND}</td>
               <td>打开 / 退出阅读模式</td>
             </tr>
             <tr>
@@ -91,7 +98,7 @@ function About() {
   return (
     <div>
       <h2>关于</h2>
-      <p className="rh-muted">readhd v{browser.runtime.getManifest().version}</p>
+      <p className="rh-muted">ReadHD v{browser.runtime.getManifest().version}</p>
       <p style={{ lineHeight: 1.8 }}>{ABOUT_TEXT}</p>
     </div>
   );
@@ -100,7 +107,7 @@ function About() {
 function Welcome({ go }: { go: (p: Page) => void }) {
   return (
     <div className="welcome rh-card">
-      <h2>欢迎使用 readhd</h2>
+      <h2>欢迎使用 ReadHD</h2>
       <p>三步上手：</p>
       <ol>
         <li>
@@ -160,7 +167,7 @@ function Options() {
       <aside className="side">
         <div className="brand">
           <img src="/icon/32.png" alt="" width={24} height={24} />
-          readhd
+          ReadHD
         </div>
         {NAV.map((n) => (
           <button

@@ -42,8 +42,20 @@ body {
 }
 .readerbtn .kbd {
   margin-left: auto;
+  display: inline-flex;
+  gap: 3px;
   font-size: 11.5px;
-  opacity: 0.75;
+  opacity: 0.85;
+}
+.readerbtn .kbd kbd {
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 16px;
+  padding: 1px 3px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
 }
 
 .preview {

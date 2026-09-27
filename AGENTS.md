@@ -1,4 +1,4 @@
-# readhd
+# ReadHD
 
 Chrome/Edge MV3 extension that restyles Chinese text on web pages (alternating
 word colors via the CSS Custom Highlight API + adjustable typography) to help

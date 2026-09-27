@@ -35,6 +35,7 @@ export function splitSentences(text: string): SentenceSpan[] {
 }
 
 export interface TtsVoiceLike {
+  name: string;
   voiceURI: string;
   lang: string;
   localService: boolean;
@@ -77,7 +78,58 @@ export interface QueueItem {
   text: string;
 }
 
-/** Pure: pick a voice per the preference order. */
+const NOVELTY = new Set(
+  'eddy flo grandma grandpa reed rocko sandy shelley'.split(' '),
+);
+
+/** Base voice name: part before " (" (e.g. "Yue (Premium)" → "Yue"). */
+function baseName(name: string): string {
+  return name.split(' (')[0] ?? name;
+}
+
+function isNovelty(name: string): boolean {
+  return NOVELTY.has(baseName(name).toLowerCase());
+}
+
+/** Pure: pick the default voice per the preference order. */
+export function pickAutoVoice(voices: TtsVoiceLike[]): TtsVoiceLike | null {
+  const list = voices.map((v) => ({
+    v,
+    name: v.name.toLowerCase(),
+    lang: v.lang.replace('_', '-').toLowerCase(),
+  }));
+  const zhCN = list.filter((x) => x.lang.startsWith('zh-cn'));
+  // macOS premium/natural voices
+  let hit = zhCN.find((x) => x.name.startsWith('yue'));
+  if (hit) return hit.v;
+  hit = zhCN.find((x) => x.name.startsWith('tingting'));
+  if (hit) return hit.v;
+  // Edge neural voices
+  hit = list.find(
+    (x) => x.name.includes('xiaoxiao') && /online|natural/.test(x.name),
+  );
+  if (hit) return hit.v;
+  hit = zhCN.find(
+    (x) => x.name.includes('microsoft') && /online|natural/.test(x.name),
+  );
+  if (hit) return hit.v;
+  // local zh-CN system voices, skipping the novelty voices
+  const localZh = zhCN.filter((x) => x.v.localService && !isNovelty(x.v.name));
+  hit =
+    localZh.find((x) => /huihui|yaoyao|kangkang/.test(x.name)) ?? localZh[0];
+  if (hit) return hit.v;
+  hit = zhCN.find((x) => x.name.includes('google'));
+  if (hit) return hit.v;
+  // any other non-novelty zh voice
+  hit =
+    zhCN.find((x) => !isNovelty(x.v.name)) ??
+    list.find((x) => x.lang.startsWith('zh') && !isNovelty(x.v.name));
+  if (hit) return hit.v;
+  // last resort: any zh voice at all
+  return list.find((x) => x.lang.startsWith('zh'))?.v ?? null;
+}
+
+/** Pure: pick a voice — a saved URI wins, otherwise the auto ranking. */
 export function pickVoice(
   voices: TtsVoiceLike[],
   voiceURI: string,
@@ -86,13 +138,7 @@ export function pickVoice(
     const v = voices.find((x) => x.voiceURI === voiceURI);
     if (v) return v;
   }
-  return (
-    voices.find(
-      (v) => v.lang.replace('_', '-').startsWith('zh-CN') && v.localService,
-    ) ??
-    voices.find((v) => v.lang.replace('_', '-').startsWith('zh')) ??
-    null
-  );
+  return pickAutoVoice(voices);
 }
 
 export class TtsPlayer {

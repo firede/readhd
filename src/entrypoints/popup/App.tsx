@@ -23,6 +23,10 @@ import {
   type Engine,
 } from '../../lib/settings';
 import { analyzeStatus } from '../../lib/analyzer';
+import {
+  readerShortcut,
+  type FormattedShortcut,
+} from '../../lib/shortcut';
 import { planMarks } from '../../lib/marks';
 import {
   lightPair,
@@ -177,6 +181,7 @@ export default function App() {
   const [fs, setFs] = useState<number | null>(null);
   const [bg, setBg] = useState<BgTheme>('none');
   const [typoOpen, setTypoOpen] = useState(false);
+  const [sc, setSc] = useState<FormattedShortcut | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -187,7 +192,7 @@ export default function App() {
         !!tab?.url &&
         (tab.url.startsWith('http://') || tab.url.startsWith('https://'));
       const h = web ? new URL(tab.url!).hostname : '';
-      const [en, hs, a, p, u, fd, e, l, s, f, b, rr, rl, st, le, ud] =
+      const [en, hs, a, p, u, fd, e, l, s, f, b, rr, rl, st, le, ud, scv] =
         await Promise.all([
           enabled.getValue(),
           disabledHosts.getValue(),
@@ -205,6 +210,7 @@ export default function App() {
           analyzeStatus(),
           lastError.getValue(),
           usageDaily.getValue(),
+          readerShortcut(),
         ]);
       setOn(en);
       setHosts(hs);
@@ -222,6 +228,7 @@ export default function App() {
       setBg(b);
       setRuler(rr);
       setLines(rl);
+      setSc(scv);
       setStatus(st);
       if (le && Date.now() - le.ts < 10 * 60 * 1000) {
         setErr({ ts: le.ts, message: le.message });
@@ -273,7 +280,7 @@ export default function App() {
     <div className="popup">
       <header className="hd">
         <img src="/icon/32.png" alt="" width={22} height={22} />
-        <h1>readhd 阅读助手</h1>
+        <h1>ReadHD 阅读助手</h1>
         <Switch
           checked={on}
           label="启用阅读辅助"
@@ -326,7 +333,13 @@ export default function App() {
         onClick={() => void openReader()}
       >
         打开阅读模式
-        <span className="kbd">Alt+Shift+R</span>
+        {sc && (
+          <span className="kbd" title={sc.full}>
+            {sc.keys.map((k, i) => (
+              <kbd key={i}>{k}</kbd>
+            ))}
+          </span>
+        )}
       </Button>
 
       <Card title="标色">

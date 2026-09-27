@@ -760,6 +760,20 @@ check(
     ),
 );
 
+// verify the suggested key was accepted: toggle-reader must have a shortcut
+{
+  const p = await ctx.newPage();
+  await p.goto(`chrome-extension://${extId}/options.html`);
+  const cmds = await p.evaluate(() => chrome.commands.getAll());
+  await p.close();
+  const tr = cmds.find((c) => c.name === 'toggle-reader');
+  check(
+    'commands: toggle-reader has a bound shortcut',
+    !!tr && tr.shortcut !== '',
+    JSON.stringify(cmds),
+  );
+}
+
 if (dev) {
   // content-script world cannot read storage.local (TRUSTED_CONTEXTS)
   const probe = await ctx.newPage();
@@ -879,6 +893,7 @@ if (dev) {
   await setLocal({ 'activeProvider': 'minimax-cn' });
   await popupShot2('m3-popup.png');
   await popupShot2('m3-popup-dark.png', { dark: true });
+  await popupShot2('m4-popup.png');
 
   // in-page chunk-mode default screenshot (dev key, cloud)
   const cp = await ctx.newPage();
@@ -928,6 +943,8 @@ if (dev) {
   });
   await optShot('#usage', 'm3-options-usage.png');
   await optShot('#help', 'm3-options-help.png');
+  await optShot('#tts', 'm4-options-tts.png');
+  await optShot('#help', 'm4-options-help.png');
 
   // icon sizes side by side
   {

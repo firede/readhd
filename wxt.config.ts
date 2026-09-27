@@ -4,7 +4,7 @@ export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
   manifest: (env) => ({
-    name: 'readhd 阅读助手',
+    name: 'ReadHD 阅读助手',
     description: '帮助有阅读困难的孩子更轻松地阅读中文网页',
     permissions: ['storage', 'activeTab'],
     host_permissions: [

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  pickAutoVoice,
   pickVoice,
   splitSentences,
   TtsPlayer,
@@ -43,25 +44,100 @@ describe('splitSentences', () => {
   });
 });
 
-const ZH_CN: TtsVoiceLike = {
-  voiceURI: 'zh-cn-v',
-  lang: 'zh-CN',
-  localService: true,
-};
-const ZH_TW: TtsVoiceLike = {
-  voiceURI: 'zh-tw-v',
-  lang: 'zh-TW',
-  localService: false,
-};
-const EN: TtsVoiceLike = { voiceURI: 'en-v', lang: 'en-US', localService: true };
+const v = (
+  name: string,
+  lang = 'zh-CN',
+  localService = true,
+): TtsVoiceLike => ({
+  name,
+  voiceURI: name,
+  lang,
+  localService,
+});
+
+const ZH_CN: TtsVoiceLike = v('Tingting', 'zh-CN', true);
+const ZH_TW: TtsVoiceLike = v('Sinji', 'zh-TW', false);
+const EN: TtsVoiceLike = v('Samantha', 'en-US', true);
 
 describe('pickVoice', () => {
   it('prefers explicit voiceURI', () => {
-    expect(pickVoice([ZH_TW, ZH_CN], 'zh-tw-v')).toBe(ZH_TW);
+    expect(pickVoice([ZH_TW, ZH_CN], ZH_TW.voiceURI)).toBe(ZH_TW);
   });
-  it('then zh-CN localService, then any zh*, else null', () => {
-    expect(pickVoice([ZH_TW, EN], '')).toBe(ZH_TW);
-    expect(pickVoice([EN], '')).toBeNull();
+});
+
+describe('pickAutoVoice', () => {
+  it('macOS list: Yue wins over Eddy/Tingting/novelty voices', () => {
+    const macos = [
+      v('Eddy (中文（中国大陆）)'),
+      v('Tingting'),
+      v('Yue (Premium)'),
+      v('Grandma (中文（中国大陆）)'),
+      v('Shelley (中文（中国大陆）)'),
+      v('Rocko (中文（中国大陆）)'),
+    ];
+    expect(pickAutoVoice(macos)?.name).toBe('Yue (Premium)');
+  });
+
+  it('macOS list without Yue: Tingting next', () => {
+    const macos = [v('Eddy'), v('Tingting'), v('Grandma')];
+    expect(pickAutoVoice(macos)?.name).toBe('Tingting');
+  });
+
+  it('Edge list: Xiaoxiao Online (Natural) preferred', () => {
+    const edge = [
+      v('Microsoft Yunxi Online (Natural)', 'zh-CN', false),
+      v('Microsoft Xiaoxiao Online (Natural)', 'zh-CN', false),
+      v('Microsoft Yunyang Online (Natural)', 'zh-CN', false),
+    ];
+    expect(pickAutoVoice(edge)?.name).toBe(
+      'Microsoft Xiaoxiao Online (Natural)',
+    );
+  });
+
+  it('Edge list without Xiaoxiao: other Microsoft zh-CN neural', () => {
+    const edge = [
+      v('Microsoft Yunxi Online (Natural)', 'zh-CN', false),
+      v('Microsoft HsiaoChen Online (Natural)', 'zh-TW', false),
+    ];
+    expect(pickAutoVoice(edge)?.name).toBe(
+      'Microsoft Yunxi Online (Natural)',
+    );
+  });
+
+  it('Chrome Windows list: prefers Huihui/Yaoyao/Kangkang among local zh-CN', () => {
+    const win = [
+      v('Microsoft Zira', 'en-US'),
+      v('Microsoft Huihui', 'zh-CN'),
+      v('Microsoft Lili', 'zh-CN'),
+    ];
+    expect(pickAutoVoice(win)?.name).toBe('Microsoft Huihui');
+  });
+
+  it('local zh-CN fallback: first non-novelty when no huihui/yaoyao/kangkang', () => {
+    const vs = [v('Eddy'), v('Lili'), v('Meijia')];
+    expect(pickAutoVoice(vs)?.name).toBe('Lili');
+  });
+
+  it('Google zh-CN voice picked before generic zh-*', () => {
+    const vs = [
+      v('Sinji', 'zh-TW', false),
+      v('Google 普通话', 'zh-CN', false),
+    ];
+    expect(pickAutoVoice(vs)?.name).toBe('Google 普通话');
+  });
+
+  it('other zh-CN beats zh-* from other regions', () => {
+    const vs = [v('Sinji', 'zh-TW'), v('Lili', 'zh-CN', false)];
+    expect(pickAutoVoice(vs)?.name).toBe('Lili');
+  });
+
+  it('only novelty voices: still returns one', () => {
+    const vs = [v('Eddy'), v('Grandma'), v('Rocko')];
+    expect(pickAutoVoice(vs)?.name).toBe('Eddy');
+  });
+
+  it('no zh voice: null', () => {
+    expect(pickAutoVoice([v('Samantha', 'en-US')])).toBeNull();
   });
 });
 
